@@ -1,6 +1,6 @@
 """
 Tamimi Markets Hot Deals Monitor - 50-99% DISCOUNTS
-Scrolls ALL THE WAY to the end to load EVERY product
+Improved discount detection to find ALL products
 """
 
 import os
@@ -120,8 +120,8 @@ class TamimiScraper:
                 final_count = await page.evaluate("document.querySelectorAll('[data-testid=\"product\"]').length")
                 logger.info(f"🎯 FINAL PRODUCT COUNT: {final_count}")
                 
-                # ============ EXTRACT ALL PRODUCTS USING JAVASCRIPT ============
-                logger.info("Extracting all product data...")
+                # ============ EXTRACT ALL PRODUCTS USING IMPROVED JAVASCRIPT ============
+                logger.info("Extracting all product data with improved discount detection...")
                 
                 products_data = await page.evaluate("""
                     () => {
@@ -132,8 +132,11 @@ class TamimiScraper:
                         
                         productElements.forEach((element) => {
                             try {
-                                // Get discount percentage
+                                // ===== MULTIPLE METHODS TO FIND DISCOUNT =====
                                 let discount = 0;
+                                const allText = element.innerText;
+                                
+                                // Method 1: Look for discount badge with specific class
                                 const discountElem = element.querySelector('[class*="Product__StyledDiscount"]');
                                 if (discountElem) {
                                     const discountText = discountElem.innerText;
@@ -141,25 +144,55 @@ class TamimiScraper:
                                     if (match) discount = parseInt(match[1]);
                                 }
                                 
-                                // If no discount badge, try to find percentage in text
+                                // Method 2: Look for any element with percentage
                                 if (discount === 0) {
-                                    const text = element.innerText;
-                                    const matches = text.match(/(\\d+)%/);
-                                    if (matches) discount = parseInt(matches[1]);
+                                    const percentElements = element.querySelectorAll('[class*="percent"], [class*="discount"], [class*="offer"]');
+                                    for (const el of percentElements) {
+                                        const text = el.innerText;
+                                        const match = text.match(/(\\d+)%/);
+                                        if (match) {
+                                            discount = parseInt(match[1]);
+                                            break;
+                                        }
+                                    }
                                 }
+                                
+                                // Method 3: Look for percentage in text with "OFF"
+                                if (discount === 0) {
+                                    const offMatch = allText.match(/(\\d+)%\\s*OFF/i);
+                                    if (offMatch) discount = parseInt(offMatch[1]);
+                                }
+                                
+                                // Method 4: Look for any percentage in the entire text
+                                if (discount === 0) {
+                                    const anyMatch = allText.match(/(\\d+)%/);
+                                    if (anyMatch) discount = parseInt(anyMatch[1]);
+                                }
+                                
+                                // Method 5: Calculate from prices if available
+                                // This will be done after we extract prices
                                 
                                 // Get current price
                                 let currentPrice = 0;
                                 const priceElem = element.querySelector('[class*="Price__SellingPrice"]');
                                 if (priceElem) {
-                                    currentPrice = parseFloat(priceElem.innerText);
+                                    const priceText = priceElem.innerText;
+                                    const priceMatch = priceText.match(/(\\d+\\.?\\d*)/);
+                                    if (priceMatch) currentPrice = parseFloat(priceMatch[1]);
                                 }
                                 
                                 // Get original price (if discounted)
                                 let originalPrice = null;
                                 const originalElem = element.querySelector('[class*="Price__SellingPriceOutDated"]');
                                 if (originalElem) {
-                                    originalPrice = parseFloat(originalElem.innerText);
+                                    const originalText = originalElem.innerText;
+                                    const originalMatch = originalText.match(/(\\d+\\.?\\d*)/);
+                                    if (originalMatch) originalPrice = parseFloat(originalMatch[1]);
+                                }
+                                
+                                // Method 5 (continued): Calculate discount from prices
+                                if (discount === 0 && originalPrice && currentPrice && originalPrice > currentPrice) {
+                                    discount = Math.round(((originalPrice - currentPrice) / originalPrice) * 100);
                                 }
                                 
                                 // Get product name
@@ -174,6 +207,12 @@ class TamimiScraper:
                                     if (titleElem) name = titleElem.innerText.trim();
                                 }
                                 
+                                // If still no name, get the first long text
+                                if (!name || name.length < 3) {
+                                    const textLines = allText.split('\\n').filter(line => line.trim().length > 5);
+                                    if (textLines.length > 0) name = textLines[0].trim();
+                                }
+                                
                                 // Clean up name
                                 name = name.replace(/\\s+/g, ' ').trim();
                                 
@@ -182,13 +221,16 @@ class TamimiScraper:
                                 const link = element.closest('a');
                                 if (link && link.href) url = link.href;
                                 
-                                if (name && currentPrice > 0 && discount > 0) {
+                                // Only include if we have valid data
+                                if (name && currentPrice > 0) {
                                     products.push({
                                         name: name,
                                         current_price: currentPrice,
                                         original_price: originalPrice,
                                         discount_percent: discount,
-                                        url: url
+                                        url: url,
+                                        // Add raw text for debugging
+                                        debug_text: allText.substring(0, 100)
                                     });
                                 }
                             } catch (e) {
@@ -200,7 +242,12 @@ class TamimiScraper:
                     }
                 """)
                 
-                logger.info(f"✅ Successfully extracted {len(products_data)} products with discounts")
+                logger.info(f"✅ Successfully extracted {len(products_data)} products")
+                
+                # Count how many have discounts
+                with_discounts = len([p for p in products_data if p.get('discount_percent', 0) > 0])
+                logger.info(f"📊 Products WITH discounts: {with_discounts}")
+                logger.info(f"📊 Products WITHOUT discounts: {len(products_data) - with_discounts}")
                 
                 # Save debug files
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -210,12 +257,14 @@ class TamimiScraper:
                 with open(f"tamimi_products_{timestamp}.json", "w", encoding="utf-8") as f:
                     json.dump({
                         'total_products_found': final_count,
-                        'products_with_discounts': len(products_data),
+                        'products_extracted': len(products_data),
+                        'products_with_discounts': with_discounts,
                         'products': products_data
                     }, f, indent=2)
                 
                 logger.info(f"📊 Total products in DOM: {final_count}")
-                logger.info(f"📊 Products with discounts: {len(products_data)}")
+                logger.info(f"📊 Products extracted: {len(products_data)}")
+                logger.info(f"📊 Products with discounts: {with_discounts}")
                 
                 return products_data
                 
@@ -251,7 +300,6 @@ class TamimiScraper:
     
     def send_telegram_alert(self, products):
         """Send alert for products with 50-99% discounts"""
-        # Use the global variables - don't try to reassign them
         global TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
         
         if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -275,19 +323,25 @@ class TamimiScraper:
                 ranges = [
                     (90, 99), (80, 89), (70, 79), (60, 69), 
                     (50, 59), (40, 49), (30, 39), (20, 29), 
-                    (10, 19), (0, 9)
+                    (10, 19), (1, 9), (0, 0)
                 ]
                 
                 message += "📈 <b>All Discounts Found:</b>\n"
                 for high, low in ranges:
-                    count = len([p for p in products if low <= p.discount_percent <= high])
+                    if low == high:
+                        count = len([p for p in products if p.discount_percent == low])
+                    else:
+                        count = len([p for p in products if low <= p.discount_percent <= high])
                     if count > 0:
-                        message += f"  • {low}-{high}%: {count} items\n"
+                        if low == high:
+                            message += f"  • {low}%: {count} items\n"
+                        else:
+                            message += f"  • {low}-{high}%: {count} items\n"
                 
-                # Show top 10 deals
-                message += f"\n🏆 <b>Top 10 Deals Today:</b>\n"
-                for i, product in enumerate(products[:10], 1):
-                    safe_name = pyhtml.escape(product.name[:35])
+                # Show top 20 deals
+                message += f"\n🏆 <b>Top 20 Deals Today:</b>\n"
+                for i, product in enumerate(products[:20], 1):
+                    safe_name = pyhtml.escape(product.name[:30])
                     message += f"  {i}. {safe_name}... - <b>{product.discount_percent}%</b>\n"
             
         else:
@@ -296,9 +350,25 @@ class TamimiScraper:
             message += f"📊 Scanned <b>{len(products)}</b> total products\n"
             message += f"🎯 Found <b>{len(hot_deals)}</b> items with {MIN_DISCOUNT}-{MAX_DISCOUNT}% off!\n\n"
             
-            # Show all hot deals (limit to 20 to avoid message too long)
-            for i, product in enumerate(hot_deals[:20], 1):
-                safe_name = pyhtml.escape(product.name[:45])
+            # Group by discount range
+            ranges = [(90,99), (80,89), (70,79), (60,69), (50,59)]
+            for high, low in ranges:
+                range_deals = [p for p in hot_deals if low <= p.discount_percent <= high]
+                if range_deals:
+                    message += f"<b>{low}-{high}% OFF ({len(range_deals)} items):</b>\n"
+                    # Show first 3 from each range
+                    for product in range_deals[:3]:
+                        safe_name = pyhtml.escape(product.name[:25])
+                        message += f"  • {safe_name}... ({product.discount_percent}%)\n"
+                    if len(range_deals) > 3:
+                        message += f"  ... and {len(range_deals)-3} more\n"
+                    message += "\n"
+            
+            # Show all hot deals (limit to 30)
+            message += f"<b>Complete List of {MIN_DISCOUNT}-{MAX_DISCOUNT}% Deals:</b>\n\n"
+            
+            for i, product in enumerate(hot_deals[:30], 1):
+                safe_name = pyhtml.escape(product.name[:40])
                 message += f"<b>{i}.</b> {safe_name}\n"
                 message += f"   <b>{product.discount_percent}%</b> off"
                 if product.original_price:
@@ -310,8 +380,8 @@ class TamimiScraper:
                     message += f"\n   <a href='{product.url}'>🔗 View Product</a>"
                 message += "\n\n"
             
-            if len(hot_deals) > 20:
-                message += f"...and {len(hot_deals)-20} more deals! (Message truncated due to length)"
+            if len(hot_deals) > 30:
+                message += f"...and {len(hot_deals)-30} more deals!"
         
         # Send to Telegram
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -337,7 +407,6 @@ class TamimiScraper:
                 
         except Exception as e:
             logger.error(f"❌ Failed to send: {e}")
-            logger.error(f"❌ Exception type: {type(e).__name__}")
     
     async def run(self):
         """Main execution"""
@@ -356,16 +425,17 @@ class TamimiScraper:
         if not products_data:
             logger.error("❌ No products found")
             # Send error message
-            error_msg = "⚠️ <b>Tamimi Monitor Error</b>\n\nNo products were found on the page. Check the debug files."
-            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-            try:
-                requests.post(url, json={
-                    'chat_id': TELEGRAM_CHAT_ID,
-                    'text': error_msg,
-                    'parse_mode': 'HTML'
-                })
-            except:
-                pass
+            if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+                error_msg = "⚠️ <b>Tamimi Monitor Error</b>\n\nNo products were found on the page. Check the debug files."
+                url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+                try:
+                    requests.post(url, json={
+                        'chat_id': TELEGRAM_CHAT_ID,
+                        'text': error_msg,
+                        'parse_mode': 'HTML'
+                    })
+                except:
+                    pass
             return
         
         self.products = self.process_products(products_data)
@@ -376,7 +446,7 @@ class TamimiScraper:
         logger.info(f"📦 Total products with discounts: {len(self.products)}")
         
         # Count by discount range
-        ranges = [(90,99), (80,89), (70,79), (60,69), (50,59), (40,49), (30,39), (20,29), (10,19), (0,9)]
+        ranges = [(90,99), (80,89), (70,79), (60,69), (50,59), (40,49), (30,39), (20,29), (10,19), (1,9)]
         for high, low in ranges:
             count = len([p for p in self.products if low <= p.discount_percent <= high])
             if count > 0:
