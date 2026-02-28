@@ -1,43 +1,32 @@
-name: Autonomous Promotional Monitor
+name: Tamimi Hot Deals Monitor
 
 on:
   schedule:
-    # POSIX Cron Syntax: Orchestrates execution precisely at minute 0 past every 6th hour.
-    - cron: '0 */6 * * *'
-  # Permits manual, ad-hoc invocation via the GitHub Repository User Interface.
-  workflow_dispatch: 
+    # Run every 3 hours
+    - cron: '0 */3 * * *'
+  workflow_dispatch:
 
 jobs:
-  execute-monitoring-pipeline:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 15
-
+  monitor-deals:
+    runs-on: ubuntu-latest
+    
     steps:
-      # Phase 1: Clone the underlying repository architecture into the virtual runner
-      - name: Checkout Repository Architecture
-        uses: actions/checkout@v4
-
-      # Phase 2: Initialize the highly controlled Python Virtual Environment
-      - name: Provision Python Runtime
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      # Phase 3: Resolve and Install Application Dependencies
-      - name: Resolve Python Packages
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      # Phase 4: Provision System-Level Binaries for Headless Execution
-      # This critical step downloads Chromium and the underlying Linux shared libraries.
-      - name: Provision Playwright Engine and OS Dependencies
-        run: python -m playwright install --with-deps chromium
-
-      # Phase 5: Execute the Primary Monitoring Application
-      - name: Initiate Scraper Execution
-        # Cryptographically map GitHub Secrets to local OS Environment Variables
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python scraper.py
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        playwright install chromium
+    
+    - name: Run Tamimi scraper
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        DISCOUNT_THRESHOLD: 50
+      run: python scraper.py
