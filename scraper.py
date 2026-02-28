@@ -1,6 +1,6 @@
 """
 Tamimi Markets Hot Deals Monitor - ULTIMATE FIXED VERSION
-With multiple stealth options
+With correct import order
 """
 
 import os
@@ -17,19 +17,31 @@ import html as pyhtml
 from playwright.async_api import async_playwright
 import requests
 
-# Try different stealth import methods
+# ================= SETUP LOGGING FIRST =================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+# ======================================================
+
+# ================= TRY STEALTH IMPORTS =================
+STEALTH_AVAILABLE = False
+
 try:
     from playwright_stealth import stealth_async
     STEALTH_AVAILABLE = True
-    logger.info("✅ Using playwright_stealth.stealth_async")
+    logger.info("✅ Successfully imported stealth_async")
 except ImportError:
     try:
         import playwright_stealth
         STEALTH_AVAILABLE = True
-        logger.info("✅ Using playwright_stealth module")
-    except ImportError:
+        logger.info("✅ Successfully imported playwright_stealth module")
+    except ImportError as e:
         STEALTH_AVAILABLE = False
-        logger.warning("⚠️ Playwright stealth not available, using manual stealth")
+        logger.warning(f"⚠️ Playwright stealth not available: {e}")
+        logger.warning("Using manual stealth techniques instead")
+# =======================================================
 
 # ================= CONFIGURATION =================
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -39,12 +51,6 @@ DISCOUNT_THRESHOLD = int(os.environ.get("DISCOUNT_THRESHOLD", "50"))
 BASE_URL = "https://shop.tamimimarkets.com"
 HOT_DEALS_URL = f"{BASE_URL}/en/hot-deals"
 # =================================================
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -64,67 +70,26 @@ class TamimiScraper:
         self.products = []
     
     async def apply_stealth(self, page):
-        """Apply stealth techniques manually if package not available"""
+        """Apply stealth techniques"""
         
-        # Apply manual stealth if package not available
-        if not STEALTH_AVAILABLE:
-            logger.info("Applying manual stealth techniques...")
-            
-            # Override navigator properties
-            await page.add_init_script("""
-                // Override the webdriver property
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-                
-                // Add plugins
-                Object.defineProperty(navigator, 'plugins', {
-                    get: () => [1, 2, 3, 4, 5]
-                });
-                
-                // Add languages
-                Object.defineProperty(navigator, 'languages', {
-                    get: () => ['en-US', 'en']
-                });
-                
-                // Add chrome object
-                window.chrome = {
-                    runtime: {},
-                    loadTimes: function() {},
-                    csi: function() {},
-                    app: {}
-                };
-                
-                // Override permissions
-                const originalQuery = window.navigator.permissions.query;
-                window.navigator.permissions.query = (parameters) => (
-                    parameters.name === 'notifications' ?
-                        Promise.resolve({ state: 'prompt' }) :
-                        originalQuery(parameters)
-                );
-                
-                // Remove webdriver trace
-                delete navigator.__proto__.webdriver;
-            """)
-        else:
-            # Try to use the package
+        if STEALTH_AVAILABLE:
             try:
-                from playwright_stealth import stealth_async
-                await stealth_async(page)
-                logger.info("✅ Applied stealth via package")
-            except:
-                try:
+                # Try different stealth methods
+                if 'stealth_async' in dir():
+                    await stealth_async(page)
+                    logger.info("✅ Applied stealth via stealth_async")
+                else:
                     import playwright_stealth
                     await playwright_stealth.stealth_async(page)
-                    logger.info("✅ Applied stealth via module")
-                except:
-                    logger.warning("⚠️ Failed to apply stealth package, using manual")
-                    # Apply manual stealth as fallback
-                    await self.apply_manual_stealth(page)
-    
-    async def apply_manual_stealth(self, page):
-        """Manual stealth fallback"""
+                    logger.info("✅ Applied stealth via playwright_stealth.stealth_async")
+                return
+            except Exception as e:
+                logger.warning(f"⚠️ Stealth package failed: {e}, using manual")
+        
+        # Manual stealth fallback
+        logger.info("Applying manual stealth techniques...")
         await page.add_init_script("""
+            // Override navigator properties
             Object.defineProperty(navigator, 'webdriver', {
                 get: () => undefined
             });
@@ -133,12 +98,28 @@ class TamimiScraper:
                 get: () => [1, 2, 3, 4, 5]
             });
             
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['en-US', 'en']
+            });
+            
+            // Add chrome object
             window.chrome = {
                 runtime: {},
                 loadTimes: function() {},
                 csi: function() {},
                 app: {}
             };
+            
+            // Override permissions
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ?
+                    Promise.resolve({ state: 'prompt' }) :
+                    originalQuery(parameters)
+            );
+            
+            // Remove webdriver trace
+            delete navigator.__proto__.webdriver;
         """)
     
     async def fetch_page(self):
@@ -153,7 +134,6 @@ class TamimiScraper:
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-web-security',
-                    '--disable-features=IsolateOrigins,site-per-process',
                 ]
             )
             
@@ -163,8 +143,6 @@ class TamimiScraper:
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 locale='en-US',
                 timezone_id='Asia/Riyadh',
-                geolocation={'longitude': 46.6753, 'latitude': 24.7136},
-                permissions=['geolocation']
             )
             
             page = await context.new_page()
@@ -176,40 +154,28 @@ class TamimiScraper:
                 logger.info(f"Navigating to {HOT_DEALS_URL}")
                 
                 # Add random delay
-                await asyncio.sleep(random.uniform(3, 6))
+                await asyncio.sleep(random.uniform(2, 5))
                 
-                # Navigate with longer timeout
-                response = await page.goto(
+                # Navigate
+                await page.goto(
                     HOT_DEALS_URL, 
                     wait_until='domcontentloaded', 
                     timeout=60000
                 )
                 
                 # Wait for page to load
-                await page.wait_for_timeout(random.uniform(5000, 8000))
+                await page.wait_for_timeout(5000)
                 
-                # Check page title
+                # Check page
                 page_title = await page.title()
                 logger.info(f"Page title: {page_title}")
                 
-                # Check if blocked
-                page_content = await page.content()
-                if any(term in page_content.lower() for term in [
-                    'cloudflare', 'ddos', 'blocked', 'access denied', 'captcha', 'verify'
-                ]):
-                    logger.warning("⚠️ Bot protection detected!")
-                    await page.screenshot(path="blocked.png")
-                    
-                    # Try to get actual page content
-                    html_content = page_content
-                else:
-                    # Scroll slowly like a human
-                    for i in range(3):
-                        await page.evaluate(f"window.scrollTo(0, {i * 500})")
-                        await page.wait_for_timeout(random.uniform(1000, 2000))
-                    
-                    # Get content
-                    html_content = await page.content()
+                # Scroll
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(3000)
+                
+                # Get content
+                html_content = await page.content()
                 
                 # Save debug files
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -234,13 +200,9 @@ class TamimiScraper:
         soup = BeautifulSoup(html_content, 'html.parser')
         products = []
         
-        # Method 1: Find by discount badges
-        discount_elements = soup.find_all(string=re.compile(r'(\d+)%'))
-        logger.info(f"Found {len(discount_elements)} discount badges")
-        
-        # Method 2: Find product containers
+        # Find product containers
         containers = soup.find_all(['div', 'article', 'li'], 
-                                  class_=re.compile(r'product|item|card|offer|grid', re.I))
+                                  class_=re.compile(r'product|item|card|offer', re.I))
         
         logger.info(f"Found {len(containers)} product containers")
         
@@ -248,7 +210,7 @@ class TamimiScraper:
             try:
                 container_text = container.get_text(separator=' ', strip=True)
                 
-                # Check if container has price and discount
+                # Must have price and discount
                 if 'SAR' not in container_text.upper():
                     continue
                     
@@ -266,29 +228,27 @@ class TamimiScraper:
                 if not price_match:
                     price_match = re.search(r'(\d+\.?\d*)\s*SAR', container_text, re.IGNORECASE)
                 if not price_match:
-                    price_match = re.search(r'(\d+\.?\d*)\s*ر\.س', container_text)
-                if not price_match:
                     continue
                 price = float(price_match.group(1))
                 
-                # Extract product name
+                # Extract name
                 name = ""
                 
-                # Try headings first
-                headings = container.find_all(['h2', 'h3', 'h4', 'h5', 'h6'])
+                # Try headings
+                headings = container.find_all(['h2', 'h3', 'h4', 'h5'])
                 if headings:
                     for h in headings:
                         h_text = h.get_text(strip=True)
                         if h_text and len(h_text) > len(name):
                             name = h_text
                 
-                # Try title/name classes
+                # Try title classes
                 if not name or len(name) < 3:
                     title = container.find(class_=re.compile(r'title|name', re.I))
                     if title:
                         name = title.get_text(strip=True)
                 
-                # Try product links
+                # Try links
                 if not name or len(name) < 3:
                     link = container.find('a', href=True)
                     if link:
@@ -298,7 +258,6 @@ class TamimiScraper:
                 
                 # Clean name
                 name = re.sub(r'\s+', ' ', name).strip()
-                name = re.sub(r'[^\w\s\u0600-\u06FF-]', '', name)  # Keep Arabic/English
                 
                 if name and price and discount > 0:
                     # Calculate original price
@@ -395,10 +354,6 @@ class TamimiScraper:
         
         self.products = self.parse_products(html)
         logger.info(f"📦 Total products found: {len(self.products)}")
-        
-        if self.products:
-            discounts = [p.discount_percent for p in self.products]
-            logger.info(f"📊 Discount range: {min(discounts)}% - {max(discounts)}%")
         
         hot_deals = [p for p in self.products if p.discount_percent >= DISCOUNT_THRESHOLD]
         logger.info(f"🔥 Hot deals (≥{DISCOUNT_THRESHOLD}%): {len(hot_deals)}")
