@@ -2,8 +2,7 @@ name: Tamimi Hot Deals Monitor
 
 on:
   schedule:
-    # Run every 3 hours
-    - cron: '0 */3 * * *'
+    - cron: '0 */2 * * *'  # Every 2 hours
   workflow_dispatch:
 
 jobs:
@@ -21,12 +20,11 @@ jobs:
     
     - name: Install dependencies
       run: |
-        pip install -r requirements.txt
+        pip install playwright beautifulsoup4 requests
         playwright install chromium
     
-    - name: Run Tamimi scraper
+    - name: Run scraper
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        DISCOUNT_THRESHOLD: 50
       run: python scraper.py
