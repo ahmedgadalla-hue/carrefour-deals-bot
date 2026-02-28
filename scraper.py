@@ -1,6 +1,5 @@
 """
-Tamimimarkets Hot Deals Monitor - FULLY UPDATED
-Includes HTML debug saving and HTML parsing for Telegram
+Tamimimarkets Hot Deals Monitor - ENGLISH VERSION
 """
 
 import os
@@ -9,7 +8,7 @@ import logging
 import asyncio
 from typing import Optional
 from dataclasses import dataclass, asdict
-import html as pyhtml  # Safely escape text for Telegram
+import html as pyhtml
 
 from playwright.async_api import async_playwright
 import requests
@@ -20,7 +19,8 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 DISCOUNT_THRESHOLD = int(os.environ.get("DISCOUNT_THRESHOLD", "50"))
 
 BASE_URL = "https://shop.tamimimarkets.com"
-HOT_DEALS_URL = f"{BASE_URL}/ar/hot-deals"
+# FIX: Switched to the English deals page
+HOT_DEALS_URL = f"{BASE_URL}/en/hot-deals"
 # =================================================
 
 logging.basicConfig(
@@ -28,7 +28,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class Product:
@@ -40,7 +39,6 @@ class Product:
     
     def to_dict(self):
         return asdict(self)
-
 
 class TamimiScraper:
     def __init__(self):
@@ -55,17 +53,16 @@ class TamimiScraper:
                 logger.info(f"Navigating to {HOT_DEALS_URL}")
                 await page.goto(HOT_DEALS_URL, wait_until='networkidle', timeout=30000)
                 
+                # Give the page plenty of time to load the Javascript products
                 await page.wait_for_timeout(5000)
                 await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await page.wait_for_timeout(2000)
+                await page.wait_for_timeout(3000)
                 
                 page_html = await page.content()
                 logger.info(f"Page loaded, HTML length: {len(page_html)}")
                 
-                # Save screenshot for debugging
+                # Save screenshot and HTML for debugging just in case!
                 await page.screenshot(path="tamimi_deals.png")
-                
-                # Save HTML for debugging
                 with open("tamimi_page.html", "w", encoding="utf-8") as f:
                     f.write(page_html)
                 
@@ -83,18 +80,20 @@ class TamimiScraper:
         soup = BeautifulSoup(page_html, 'html.parser')
         products = []
         
-        # Using 'string' instead of 'text' for newer BeautifulSoup versions
-        discount_elements = soup.find_all(string=re.compile(r'\d+%\s*خصم'))
-        logger.info(f"Found {len(discount_elements)} discount badges")
+        # Look for any text containing a percentage sign (e.g., "50% OFF", "-50%")
+        discount_elements = soup.find_all(string=re.compile(r'\d+%'))
+        logger.info(f"Found {len(discount_elements)} potential discount badges")
         
         for discount_elem in discount_elements:
             try:
                 parent = discount_elem.parent
                 
-                for _ in range(5):
+                # Go up the HTML tree to find the whole product card
+                for _ in range(6):
                     if parent:
-                        parent_text = parent.get_text()
-                        if 'ريال' in parent_text and len(parent_text) > 20:
+                        parent_text = parent.get_text(separator=' ', strip=True).upper()
+                        # Check if this container has the currency "SAR"
+                        if 'SAR' in parent_text and len(parent_text) > 10:
                             break
                         parent = parent.parent
                     else:
@@ -103,30 +102,44 @@ class TamimiScraper:
                 if not parent:
                     continue
                 
+                # 1. Get Discount
                 discount_text = discount_elem.strip()
-                discount_match = re.search(r'(\d+)', discount_text)
+                discount_match = re.search(r'(\d+)%', discount_text)
                 if not discount_match:
                     continue
                 discount_percent = int(discount_match.group(1))
                 
-                all_text = parent.get_text()
-                price_match = re.search(r'(\d+\.?\d*)\s*ريال', all_text)
+                # 2. Get Price
+                all_text = parent.get_text(separator=' ', strip=True)
+                
+                # Look for "SAR 15.50" or "15.50 SAR"
+                price_match = re.search(r'SAR\s*(\d+\.?\d*)', all_text, re.IGNORECASE)
+                if not price_match:
+                    price_match = re.search(r'(\d+\.?\d*)\s*SAR', all_text, re.IGNORECASE)
+                    
                 if not price_match:
                     continue
                 current_price = float(price_match.group(1))
                 
-                parts = all_text.split(str(current_price) + ' ريال')[0].strip()
-                name = parts.replace(discount_text, '').strip()
+                # 3. Get Name (Look for standard heading tags)
+                name = ""
+                name_tags = parent.find_all(['h2', 'h3', 'h4', 'h5', 'strong'])
+                if name_tags:
+                    # Grab the longest text from headings, likely the product name
+                    name = max([tag.get_text(strip=True) for tag in name_tags], key=len)
+                else:
+                    # Fallback: take first part of text
+                    name = all_text.split('SAR')[0].replace(discount_text, '').strip()
                 
-                if len(name) < 5:
-                    headings = parent.find_all(['h2', 'h3', 'h4', 'h5', 'strong'])
-                    if headings:
-                        name = headings[0].get_text(strip=True)
+                if len(name) < 3:
+                    continue
                 
+                # 4. Calculate original price
                 original_price = None
                 if discount_percent > 0:
                     original_price = round(current_price / (1 - discount_percent/100), 2)
                 
+                # 5. Get URL
                 url = ""
                 link = parent.find('a', href=True)
                 if link:
@@ -151,28 +164,37 @@ class TamimiScraper:
                 logger.debug(f"Error parsing product: {e}")
                 continue
         
+        # 6. Alternative parsing method fallback
         if len(products) < 5:
             logger.info("Trying alternative parsing method...")
             containers = soup.find_all(['div', 'article'], class_=re.compile(r'product|item|card', re.I))
             
             for container in containers:
                 try:
-                    text = container.get_text()
+                    text = container.get_text(separator=' ', strip=True)
                     
-                    if 'ريال' not in text or '%' not in text:
+                    if 'SAR' not in text.upper() or '%' not in text:
                         continue
                     
-                    discount_match = re.search(r'(\d+)%\s*خصم', text)
+                    discount_match = re.search(r'(\d+)%', text)
                     if not discount_match:
                         continue
                     discount = int(discount_match.group(1))
                     
-                    price_match = re.search(r'(\d+\.?\d*)\s*ريال', text)
+                    price_match = re.search(r'SAR\s*(\d+\.?\d*)', text, re.IGNORECASE)
+                    if not price_match:
+                        price_match = re.search(r'(\d+\.?\d*)\s*SAR', text, re.IGNORECASE)
+                        
                     if not price_match:
                         continue
                     price = float(price_match.group(1))
                     
-                    name = text.split('%')[0].strip()
+                    name_tags = container.find_all(['h2', 'h3', 'h4', 'h5', 'strong'])
+                    if name_tags:
+                        name = max([tag.get_text(strip=True) for tag in name_tags], key=len)
+                    else:
+                        name = text.split('%')[0].strip()
+                        
                     if len(name) < 3:
                         continue
                     
@@ -208,20 +230,16 @@ class TamimiScraper:
                     'text': message,
                     'parse_mode': 'HTML'
                 })
-                logger.info("Sent no-deals message to Telegram")
             except:
                 pass
             return
         
         products.sort(key=lambda x: x.discount_percent, reverse=True)
         
-        message = f"🔥 <b>تميمي ماركتس - عروض حصرية</b> 🔥\n"
-        message += f"🔥 <b>TAMIMIMARKETS - HOT DEALS</b> 🔥\n\n"
-        message += f"تم العثور على <b>{len(products)}</b> منتج بتخفيض ≥{DISCOUNT_THRESHOLD}%\n"
+        message = f"🔥 <b>TAMIMI MARKETS - HOT DEALS</b> 🔥\n\n"
         message += f"Found <b>{len(products)}</b> items with ≥{DISCOUNT_THRESHOLD}% off\n\n"
         
         for i, product in enumerate(products[:10], 1):
-            # Escape the product name so rogue characters don't break Telegram HTML
             safe_name = pyhtml.escape(product.name[:50])
             message += f"<b>{i}. {safe_name}</b>\n"
             
@@ -231,56 +249,40 @@ class TamimiScraper:
             message += f"  (-{product.discount_percent}% 🔥)\n"
             
             if product.url:
-                message += f"   <a href='{product.url}'>عرض المنتج</a>\n"
+                message += f"   <a href='{product.url}'>View Product</a>\n"
             message += "\n"
         
         if len(products) > 10:
-            message += f"...و {len(products)-10} عروض أخرى!"
+            message += f"...and {len(products)-10} more deals!"
         
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         try:
-            response = requests.post(url, json={
+            requests.post(url, json={
                 'chat_id': TELEGRAM_CHAT_ID,
                 'text': message,
                 'parse_mode': 'HTML',
                 'disable_web_page_preview': False
             })
-            
-            if response.status_code == 200:
-                logger.info(f"Sent {len(products)} deals to Telegram")
-            else:
-                logger.error(f"Telegram error: {response.text}")
-                
         except Exception as e:
             logger.error(f"Failed to send: {e}")
     
     async def run(self):
         logger.info("=" * 50)
-        logger.info("Starting Tamimi Deals Monitor")
+        logger.info("Starting Tamimi Deals Monitor (English)")
         logger.info("=" * 50)
         
         page_html = await self.fetch_page()
         if not page_html:
-            logger.error("No HTML fetched")
             return
         
         self.products = self.parse_products(page_html)
-        logger.info(f"Total products found: {len(self.products)}")
-        
-        discounts = [p.discount_percent for p in self.products]
-        logger.info(f"Discount range: {min(discounts) if discounts else 0}% - {max(discounts) if discounts else 0}%")
-        
         hot_deals = self.filter_hot_deals(self.products)
-        logger.info(f"Hot deals (≥{DISCOUNT_THRESHOLD}%): {len(hot_deals)}")
-        
         self.send_telegram_alert(hot_deals)
         logger.info("=" * 50)
-
 
 async def main():
     scraper = TamimiScraper()
     await scraper.run()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
