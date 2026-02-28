@@ -1,6 +1,6 @@
 """
 Tamimi Markets Hot Deals Monitor - 50-99% DISCOUNTS
-Checks ALL products on the hot deals page and notifies for any between 50-99%
+Scrolls ALL THE WAY to the end to load EVERY product
 """
 
 import os
@@ -51,7 +51,7 @@ class TamimiScraper:
         self.products = []
     
     async def fetch_page(self):
-        """Fetch the hot deals page and extract ALL products"""
+        """Fetch the hot deals page and SCROLL TO THE VERY END to load ALL products"""
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
@@ -79,43 +79,63 @@ class TamimiScraper:
                 
                 # Wait for products to appear
                 await page.wait_for_selector('[data-testid="product"]', timeout=10000)
-                logger.info("✅ Products found on page")
                 
-                # SCROLL TO LOAD ALL PRODUCTS
-                logger.info("Scrolling to load all products...")
+                # ============ AGGRESSIVE SCROLLING TO LOAD ALL PRODUCTS ============
+                logger.info("🚀 Starting AGGRESSIVE scrolling to load ALL products...")
                 
-                previous_count = 0
-                scroll_attempts = 0
-                max_scroll_attempts = 15  # Increased to ensure we get everything
+                previous_height = 0
+                same_height_count = 0
+                scroll_attempt = 0
+                max_scroll_attempts = 50  # Will keep scrolling up to 50 times
                 
-                while scroll_attempts < max_scroll_attempts:
+                while scroll_attempt < max_scroll_attempts:
+                    scroll_attempt += 1
+                    
                     # Scroll to bottom
                     await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                    await page.wait_for_timeout(3000)  # Wait for new products
                     
-                    # Check how many products we have now
+                    # Wait for new content to load
+                    await page.wait_for_timeout(3000)
+                    
+                    # Get current scroll height and product count
+                    current_height = await page.evaluate("document.body.scrollHeight")
                     current_count = await page.evaluate("document.querySelectorAll('[data-testid=\"product\"]').length")
-                    logger.info(f"Scroll {scroll_attempts + 1}: Found {current_count} products")
                     
-                    # Stop if no new products
-                    if current_count == previous_count:
-                        logger.info(f"No new products after {scroll_attempts + 1} scrolls")
-                        break
+                    logger.info(f"Scroll #{scroll_attempt}: Height={current_height}px, Products={current_count}")
                     
-                    previous_count = current_count
-                    scroll_attempts += 1
+                    # Check if we've reached the end (no more height increase)
+                    if current_height == previous_height:
+                        same_height_count += 1
+                        if same_height_count >= 3:  # After 3 times with no change, we're done
+                            logger.info(f"✅ Reached end after {scroll_attempt} scrolls. Total products: {current_count}")
+                            break
+                    else:
+                        same_height_count = 0
+                    
+                    previous_height = current_height
+                    
+                    # Random pause to mimic human behavior
+                    await asyncio.sleep(random.uniform(1, 2))
                 
-                # Final product count
+                # One final scroll to be sure
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(2000)
+                
+                # Get final product count
                 final_count = await page.evaluate("document.querySelectorAll('[data-testid=\"product\"]').length")
-                logger.info(f"✅ Total products loaded: {final_count}")
+                logger.info(f"🎯 FINAL PRODUCT COUNT: {final_count}")
                 
-                # EXTRACT ALL PRODUCTS USING JAVASCRIPT
+                # ============ EXTRACT ALL PRODUCTS USING JAVASCRIPT ============
+                logger.info("Extracting all product data...")
+                
                 products_data = await page.evaluate("""
                     () => {
                         const products = [];
                         const productElements = document.querySelectorAll('[data-testid="product"]');
                         
-                        productElements.forEach((element) => {
+                        console.log(`Found ${productElements.length} products to extract`);
+                        
+                        productElements.forEach((element, index) => {
                             try {
                                 // Get discount percentage
                                 let discount = 0;
@@ -159,6 +179,9 @@ class TamimiScraper:
                                     if (titleElem) name = titleElem.innerText.trim();
                                 }
                                 
+                                // Clean up name
+                                name = name.replace(/\\s+/g, ' ').trim();
+                                
                                 // Get product URL
                                 let url = '';
                                 const link = element.closest('a');
@@ -172,6 +195,8 @@ class TamimiScraper:
                                         discount_percent: discount,
                                         url: url
                                     });
+                                } else if (index < 5) {
+                                    console.log('Skipped product:', {name, currentPrice, discount});
                                 }
                             } catch (e) {
                                 console.error('Error parsing product:', e);
@@ -182,14 +207,26 @@ class TamimiScraper:
                     }
                 """)
                 
-                logger.info(f"✅ Successfully extracted {len(products_data)} products")
+                logger.info(f"✅ Successfully extracted {len(products_data)} products with discounts")
                 
                 # Save debug files
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 await page.screenshot(path=f"tamimi_deals_{timestamp}.png", full_page=True)
                 
                 with open(f"tamimi_products_{timestamp}.json", "w", encoding="utf-8") as f:
-                    json.dump(products_data, f, indent=2)
+                    json.dump({
+                        'total_products_found': final_count,
+                        'products_with_discounts': len(products_data),
+                        'products': products_data
+                    }, f, indent=2)
+                
+                # Also save a simple count file
+                with open(f"product_count_{timestamp}.txt", "w") as f:
+                    f.write(f"Total products in DOM: {final_count}\n")
+                    f.write(f"Products with discounts: {len(products_data)}\n")
+                
+                logger.info(f"📊 Total products in DOM: {final_count}")
+                logger.info(f"📊 Products with discounts: {len(products_data)}")
                 
                 return products_data
                 
@@ -200,7 +237,7 @@ class TamimiScraper:
                 await browser.close()
     
     def process_products(self, products_data):
-        """Convert data to Product objects"""
+        """Convert data to Product objects and sort by discount"""
         products = []
         
         for item in products_data:
@@ -232,10 +269,10 @@ class TamimiScraper:
         # Filter for 50-99% discounts
         hot_deals = [p for p in products if MIN_DISCOUNT <= p.discount_percent <= MAX_DISCOUNT]
         
+        # Prepare message
         if not hot_deals:
-            # No 50-99% deals - send summary of all deals
-            message = f"🔍 <b>Tamimi Monitor - Hot Deals Summary</b>\n\n"
-            message += f"📊 Total products found: <b>{len(products)}</b>\n\n"
+            message = f"🔍 <b>Tamimi Monitor - No {MIN_DISCOUNT}-{MAX_DISCOUNT}% Deals</b>\n\n"
+            message += f"📊 Total products scanned: <b>{len(products)}</b>\n\n"
             
             if products:
                 # Show discount distribution
@@ -245,30 +282,24 @@ class TamimiScraper:
                     (10, 19), (0, 9)
                 ]
                 
-                message += "📈 <b>Discount Breakdown:</b>\n"
+                message += "📈 <b>All Discounts Found:</b>\n"
                 for high, low in ranges:
                     count = len([p for p in products if low <= p.discount_percent <= high])
                     if count > 0:
-                        message += f"  • {low}-{high}%: {count} items\n"
+                        percentage = (count / len(products)) * 100
+                        message += f"  • {low}-{high}%: {count} items ({percentage:.1f}%)\n"
                 
-                # Show top 5 deals overall
-                message += f"\n🏆 <b>Top 5 Deals Today:</b>\n"
-                for i, product in enumerate(products[:5], 1):
-                    safe_name = pyhtml.escape(product.name[:40])
-                    message += f"  {i}. {safe_name}... - <b>{product.discount_percent}%</b> off\n"
-                
-                # Check if there are any 50%+ deals
-                fifty_plus = [p for p in products if p.discount_percent >= 50]
-                if fifty_plus:
-                    message += f"\n⚠️ Found {len(fifty_plus)} items with 50%+ discount!\n"
-                    message += f"   Highest: {fifty_plus[0].discount_percent}%"
-            
-            message += f"\n\nI'll alert you when {MIN_DISCOUNT}-{MAX_DISCOUNT}% deals appear! 🤖"
+                # Show top 10 deals
+                message += f"\n🏆 <b>Top 10 Deals Today:</b>\n"
+                for i, product in enumerate(products[:10], 1):
+                    safe_name = pyhtml.escape(product.name[:35])
+                    message += f"  {i}. {safe_name}... - <b>{product.discount_percent}%</b>\n"
             
         else:
-            # We have 50-99% deals - send detailed alert
-            message = f"🔥🔥🔥 <b>HOT DEALS ALERT! ({MIN_DISCOUNT}-{MAX_DISCOUNT}% OFF)</b> 🔥🔥🔥\n\n"
-            message += f"Found <b>{len(hot_deals)}</b> items with {MIN_DISCOUNT}-{MAX_DISCOUNT}% discounts!\n\n"
+            # We have 50-99% deals
+            message = f"🔥🔥🔥 <b>MASSIVE {MIN_DISCOUNT}-{MAX_DISCOUNT}% DISCOUNTS!</b> 🔥🔥🔥\n\n"
+            message += f"📊 Scanned <b>{len(products)}</b> total products\n"
+            message += f"🎯 Found <b>{len(hot_deals)}</b> items with {MIN_DISCOUNT}-{MAX_DISCOUNT}% off!\n\n"
             
             # Group by discount range
             ranges = [(90,99), (80,89), (70,79), (60,69), (50,59)]
@@ -276,35 +307,41 @@ class TamimiScraper:
                 range_deals = [p for p in hot_deals if low <= p.discount_percent <= high]
                 if range_deals:
                     message += f"<b>{low}-{high}% OFF ({len(range_deals)} items):</b>\n"
-                    for product in range_deals[:3]:  # Show up to 3 per range
-                        safe_name = pyhtml.escape(product.name[:40])
-                        message += f"  • {safe_name}... - {product.discount_percent}%\n"
+                    # Show a few examples from each range
+                    for product in range_deals[:3]:
+                        safe_name = pyhtml.escape(product.name[:30])
+                        message += f"  • {safe_name}... ({product.discount_percent}%)\n"
                     if len(range_deals) > 3:
                         message += f"  ... and {len(range_deals)-3} more\n"
                     message += "\n"
             
-            # Show all deals in detail
-            message += f"<b>Complete List ({len(hot_deals)} items):</b>\n\n"
-            for i, product in enumerate(hot_deals[:20], 1):  # Show up to 20 deals
-                safe_name = pyhtml.escape(product.name[:50])
-                message += f"<b>{i}. {safe_name}</b>\n"
-                
+            # Show all hot deals (limited to 30 to avoid message too long)
+            message += f"<b>Complete List of {MIN_DISCOUNT}-{MAX_DISCOUNT}% Deals:</b>\n\n"
+            
+            for i, product in enumerate(hot_deals[:30], 1):
+                safe_name = pyhtml.escape(product.name[:45])
+                message += f"<b>{i}.</b> {safe_name}\n"
+                message += f"   <b>{product.discount_percent}%</b> off"
                 if product.original_price:
-                    message += f"   <s>{product.original_price:.2f} SAR</s> → "
-                message += f"<b>{product.current_price:.2f} SAR</b>"
-                message += f"  <b>(-{product.discount_percent}%)</b>\n"
+                    message += f" | <s>{product.original_price:.2f}</s> → {product.current_price:.2f} SAR"
+                else:
+                    message += f" | Now {product.current_price:.2f} SAR"
                 
                 if product.url:
-                    message += f"   <a href='{product.url}'>View Product</a>\n"
-                message += "\n"
+                    message += f"\n   <a href='{product.url}'>🔗 View Product</a>"
+                message += "\n\n"
             
-            if len(hot_deals) > 20:
-                message += f"...and {len(hot_deals)-20} more deals!"
+            if len(hot_deals) > 30:
+                message += f"...and {len(hot_deals)-30} more deals! (Message truncated due to length)"
         
         # Send to Telegram
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         
         try:
+            # Split message if too long (Telegram limit is 4096)
+            if len(message) > 4000:
+                message = message[:4000] + "...\n\n(Message truncated due to length)"
+            
             response = requests.post(url, json={
                 'chat_id': TELEGRAM_CHAT_ID,
                 'text': message,
@@ -324,10 +361,10 @@ class TamimiScraper:
     
     async def run(self):
         """Main execution"""
-        logger.info("=" * 60)
+        logger.info("=" * 70)
         logger.info(f"🚀 Starting Tamimi Markets Hot Deals Monitor")
         logger.info(f"🎯 Looking for discounts between {MIN_DISCOUNT}% and {MAX_DISCOUNT}%")
-        logger.info("=" * 60)
+        logger.info("=" * 70)
         
         products_data = await self.fetch_page()
         if not products_data:
@@ -336,19 +373,29 @@ class TamimiScraper:
         
         self.products = self.process_products(products_data)
         
-        # Log summary
-        logger.info(f"📦 Total products: {len(self.products)}")
+        # Log comprehensive summary
+        logger.info("=" * 50)
+        logger.info(f"📊 FINAL SUMMARY")
+        logger.info(f"📦 Total products with discounts: {len(self.products)}")
         
         # Count by discount range
         ranges = [(90,99), (80,89), (70,79), (60,69), (50,59), (40,49), (30,39), (20,29), (10,19), (0,9)]
         for high, low in ranges:
             count = len([p for p in self.products if low <= p.discount_percent <= high])
             if count > 0:
-                logger.info(f"📊 {low}-{high}%: {count} items")
+                percentage = (count / len(self.products)) * 100
+                logger.info(f"📊 {low}-{high}%: {count} items ({percentage:.1f}%)")
+        
+        # Show top discounts
+        logger.info("🏆 Top 5 discounts:")
+        for i, p in enumerate(self.products[:5], 1):
+            logger.info(f"   {i}. {p.name[:40]}... - {p.discount_percent}%")
+        
+        logger.info("=" * 50)
         
         # Send alert
         self.send_telegram_alert(self.products)
-        logger.info("=" * 60)
+        logger.info("=" * 70)
 
 
 async def main():
