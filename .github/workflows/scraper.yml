@@ -32,7 +32,7 @@ jobs:
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        DISCOUNT_THRESHOLD: 50
+        DISCOUNT_THRESHOLD: 50  # <--- Change this back to 50
       run: python scraper.py
     
     - name: Upload debug files
