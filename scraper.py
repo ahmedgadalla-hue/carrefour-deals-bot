@@ -1,6 +1,5 @@
 """
-Tamimi Markets Hot Deals Monitor - ULTIMATE VERSION
-Uses stealth techniques to bypass bot detection
+Tamimi Markets Hot Deals Monitor - FIXED IMPORT VERSION
 """
 
 import os
@@ -10,13 +9,13 @@ import logging
 import asyncio
 import random
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Optional
 from dataclasses import dataclass, asdict
 import html as pyhtml
 
 from playwright.async_api import async_playwright
-from playwright_stealth import stealth_async
-from fake_useragent import UserAgent
+# FIXED IMPORT - this is the correct way now
+from playwright_stealth import stealth
 import requests
 
 # ================= CONFIGURATION =================
@@ -50,12 +49,11 @@ class Product:
 class TamimiScraper:
     def __init__(self):
         self.products = []
-        self.ua = UserAgent()
     
     async def fetch_page(self):
-        """Fetch page with multiple stealth techniques"""
+        """Fetch page with stealth techniques"""
         async with async_playwright() as p:
-            # Launch with anti-detection args
+            # Launch browser
             browser = await p.chromium.launch(
                 headless=True,
                 args=[
@@ -63,84 +61,34 @@ class TamimiScraper:
                     '--disable-dev-shm-usage',
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
-                    '--disable-web-security',
-                    '--disable-features=IsolateOrigins,site-per-process',
-                    '--disable-site-isolation-trials',
-                    '--disable-features=BlockInsecurePrivateNetworkRequests',
-                    '--disable-features=OutOfBlinkCors'
                 ]
             )
             
-            # Create context with realistic viewport and random user agent
+            # Create context
             context = await browser.new_context(
                 viewport={'width': 1920, 'height': 1080},
-                user_agent=self.ua.random,
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 locale='en-US',
-                timezone_id='Asia/Riyadh',
-                permissions=['geolocation'],
-                geolocation={'longitude': 46.6753, 'latitude': 24.7136},  # Riyadh coordinates
             )
             
             page = await context.new_page()
             
-            # Apply stealth scripts
-            await stealth_async(page)
-            
-            # Add more stealth scripts
-            await page.add_init_script("""
-                // Override navigator properties
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-                
-                Object.defineProperty(navigator, 'plugins', {
-                    get: () => [1, 2, 3, 4, 5]
-                });
-                
-                Object.defineProperty(navigator, 'languages', {
-                    get: () => ['en-US', 'en']
-                });
-                
-                // Add chrome property
-                window.chrome = {
-                    runtime: {},
-                    loadTimes: function() {},
-                    csi: function() {},
-                    app: {}
-                };
-                
-                // Override permissions
-                const originalQuery = window.navigator.permissions.query;
-                window.navigator.permissions.query = (parameters) => (
-                    parameters.name === 'notifications' ?
-                        Promise.resolve({ state: Notification.permission }) :
-                        originalQuery(parameters)
-                );
-            """)
+            # Apply stealth - FIXED: using stealth() not stealth_async()
+            await stealth(page)
             
             try:
                 logger.info(f"Navigating to {HOT_DEALS_URL}")
                 
-                # Add random delay before navigation
-                await asyncio.sleep(random.uniform(2, 5))
+                # Add random delay
+                await asyncio.sleep(random.uniform(2, 4))
                 
-                # Navigate with longer timeout
-                response = await page.goto(
-                    HOT_DEALS_URL,
-                    wait_until='domcontentloaded',
-                    timeout=60000
-                )
+                # Navigate
+                await page.goto(HOT_DEALS_URL, wait_until='domcontentloaded', timeout=60000)
                 
-                if not response:
-                    logger.error("No response received")
-                    return ""
+                # Wait for page to load
+                await page.wait_for_timeout(5000)
                 
-                logger.info(f"Response status: {response.status}")
-                
-                # Wait for page to stabilize
-                await page.wait_for_timeout(random.uniform(5000, 8000))
-                
-                # Check if we're being blocked
+                # Check if blocked
                 page_title = await page.title()
                 page_content = await page.content()
                 
@@ -150,12 +98,11 @@ class TamimiScraper:
                     await page.screenshot(path="blocked.png")
                     return ""
                 
-                # Scroll slowly like a human
-                for i in range(3):
-                    await page.evaluate(f"window.scrollTo(0, {i * 500})")
-                    await page.wait_for_timeout(random.uniform(1000, 2000))
+                # Scroll
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(3000)
                 
-                # Get page content
+                # Get content
                 html_content = await page.content()
                 
                 # Save debug files
@@ -165,11 +112,11 @@ class TamimiScraper:
                 with open(f"tamimi_page_{timestamp}.html", "w", encoding="utf-8") as f:
                     f.write(html_content)
                 
-                logger.info(f"✅ Page loaded successfully: {len(html_content)} chars")
+                logger.info(f"✅ Page loaded: {len(html_content)} chars")
                 return html_content
                 
             except Exception as e:
-                logger.error(f"Error during page fetch: {e}")
+                logger.error(f"Error: {e}")
                 return ""
             finally:
                 await browser.close()
@@ -181,90 +128,65 @@ class TamimiScraper:
         soup = BeautifulSoup(html_content, 'html.parser')
         products = []
         
-        # Method 1: Find by discount badges
-        logger.info("Searching for discount badges...")
-        
-        # Look for percentage patterns
-        discount_patterns = [
-            r'(\d+)%\s*OFF',
-            r'(\d+)%',
-            r'-(\d+)%',
-            r'SAVE\s*(\d+)%'
-        ]
-        
-        all_text = soup.get_text()
-        
-        for pattern in discount_patterns:
-            matches = re.findall(pattern, all_text, re.IGNORECASE)
-            if matches:
-                logger.info(f"Found {len(matches)} discounts using pattern: {pattern}")
-        
-        # Find product containers
+        # Find all elements that might contain products
         containers = soup.find_all(['div', 'article'], class_=re.compile(
-            r'product|item|card|offer|grid|tile', re.I
+            r'product|item|card|offer', re.I
         ))
         
         logger.info(f"Found {len(containers)} potential product containers")
         
-        for container in containers[:50]:  # Limit to first 50
+        for container in containers[:30]:  # Limit to first 30
             try:
                 container_text = container.get_text(separator=' ', strip=True)
                 
-                # Check if container has price and percentage
-                if 'SAR' not in container_text.upper() and 'ر.س' not in container_text:
+                # Must have both price and discount
+                if 'SAR' not in container_text.upper():
                     continue
                     
                 if '%' not in container_text:
                     continue
                 
-                # Extract discount percentage
+                # Get discount percentage
                 discount_match = re.search(r'(\d+)%', container_text)
                 if not discount_match:
                     continue
-                    
                 discount = int(discount_match.group(1))
                 
-                # Extract price
+                # Get price
                 price_match = re.search(r'SAR\s*(\d+\.?\d*)', container_text, re.IGNORECASE)
                 if not price_match:
                     price_match = re.search(r'(\d+\.?\d*)\s*SAR', container_text, re.IGNORECASE)
                 if not price_match:
-                    price_match = re.search(r'(\d+\.?\d*)\s*ر\.س', container_text)
-                
-                if not price_match:
                     continue
-                    
                 price = float(price_match.group(1))
                 
-                # Extract product name
+                # Get product name
                 name = ""
                 
-                # Try headings first
-                headings = container.find_all(['h2', 'h3', 'h4', 'h5', 'h6', 'strong'])
+                # Try headings
+                headings = container.find_all(['h2', 'h3', 'h4', 'h5'])
                 if headings:
-                    # Get the longest heading as name
                     name = max([h.get_text(strip=True) for h in headings if h.get_text(strip=True)], 
                               key=len, default="")
                 
-                # If no headings, try other elements
-                if not name or len(name) < 5:
-                    title_elem = container.find(class_=re.compile(r'title|name', re.I))
-                    if title_elem:
-                        name = title_elem.get_text(strip=True)
+                # Try title elements
+                if not name or len(name) < 3:
+                    title = container.find(class_=re.compile(r'title|name', re.I))
+                    if title:
+                        name = title.get_text(strip=True)
                 
-                # Last resort: get text before price
-                if not name or len(name) < 5:
-                    parts = container_text.split('SAR')[0].split('%')[0]
-                    name = parts.strip()
+                # Fallback
+                if not name or len(name) < 3:
+                    name = container_text.split('SAR')[0].split('%')[-1].strip()
                     if len(name) > 50:
                         name = name[:50]
                 
-                # Clean up name
+                # Clean name
                 name = re.sub(r'\s+', ' ', name).strip()
                 
                 if name and price and discount > 0:
                     # Calculate original price
-                    original_price = round(price / (1 - discount/100), 2) if discount < 100 else None
+                    original = round(price / (1 - discount/100), 2) if discount < 100 else None
                     
                     # Get URL
                     url = ""
@@ -279,7 +201,7 @@ class TamimiScraper:
                     product = Product(
                         name=name[:100],
                         current_price=price,
-                        original_price=original_price,
+                        original_price=original,
                         discount_percent=discount,
                         url=url
                     )
@@ -287,7 +209,6 @@ class TamimiScraper:
                     logger.info(f"✅ Found: {name[:30]}... - {discount}% off - {price} SAR")
                     
             except Exception as e:
-                logger.debug(f"Error parsing container: {e}")
                 continue
         
         return products
@@ -295,7 +216,7 @@ class TamimiScraper:
     def send_telegram_alert(self, products):
         """Send alert to Telegram"""
         if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-            logger.error("Telegram credentials missing")
+            logger.error("Missing Telegram credentials")
             return
         
         # Sort by discount
@@ -337,45 +258,31 @@ class TamimiScraper:
             }, timeout=30)
             
             if response.status_code == 200:
-                logger.info(f"✅ Telegram alert sent for {len(products)} products")
+                logger.info(f"✅ Telegram alert sent")
             else:
                 logger.error(f"❌ Telegram error: {response.text}")
                 
         except Exception as e:
-            logger.error(f"❌ Failed to send Telegram: {e}")
+            logger.error(f"❌ Failed to send: {e}")
     
     async def run(self):
         """Main execution"""
         logger.info("=" * 60)
         logger.info("🚀 Starting Tamimi Markets Monitor")
-        logger.info(f"📊 Looking for discounts ≥ {DISCOUNT_THRESHOLD}%")
         logger.info("=" * 60)
         
-        # Fetch page
         html = await self.fetch_page()
         if not html:
             logger.error("❌ Failed to fetch page")
             return
         
-        # Parse products
         self.products = self.parse_products(html)
-        logger.info(f"📦 Total products found: {len(self.products)}")
+        logger.info(f"📦 Total products: {len(self.products)}")
         
-        # Show discount distribution
-        if self.products:
-            discounts = [p.discount_percent for p in self.products]
-            logger.info(f"📈 Discount range: {min(discounts)}% - {max(discounts)}%")
-            logger.info(f"📊 Average discount: {sum(discounts)/len(discounts):.1f}%")
-        
-        # Filter hot deals
         hot_deals = [p for p in self.products if p.discount_percent >= DISCOUNT_THRESHOLD]
-        logger.info(f"🔥 Hot deals (≥{DISCOUNT_THRESHOLD}%): {len(hot_deals)}")
+        logger.info(f"🔥 Hot deals: {len(hot_deals)}")
         
-        # Send alerts
         self.send_telegram_alert(hot_deals)
-        
-        logger.info("=" * 60)
-        logger.info("✅ Monitor run completed")
         logger.info("=" * 60)
 
 
