@@ -7,7 +7,7 @@ from dataclasses import dataclass, asdict
 import html as pyhtml
 
 from playwright.async_api import async_playwright
-from playwright_stealth import stealth  # Fixed import
+from playwright_stealth.stealth import stealth  # CORRECTED IMPORT
 import requests
 
 # ================= CONFIGURATION =================
@@ -48,7 +48,7 @@ class TamimiScraper:
             )
             page = await context.new_page()
             
-            # Use the corrected stealth function
+            # This will now work correctly with the new import
             await stealth(page)
             
             try:
