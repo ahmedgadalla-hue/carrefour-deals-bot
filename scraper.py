@@ -1,5 +1,6 @@
 """
 Tamimi Markets Hot Deals Monitor - 50-99% DISCOUNTS
+Prioritized: Cheese → Food → Meat → Others
 With Arabic translations and multi-message support
 """
 
@@ -11,7 +12,7 @@ import asyncio
 import random
 import time
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict
 from dataclasses import dataclass, asdict
 import html as pyhtml
 
@@ -159,6 +160,7 @@ class Product:
     original_price: Optional[float] = None
     discount_percent: int = 0
     url: str = ""
+    category: str = "Others"  # Will be set by categorizer
     
     def to_dict(self):
         return asdict(self)
@@ -182,7 +184,44 @@ class Product:
 class TamimiScraper:
     def __init__(self):
         self.products = []
-        self.hot_deals = []  # Will store filtered products
+        self.categorized_products = {
+            "CHEESE": [],      # Priority 1: Any cheese products
+            "FOOD": [],        # Priority 2: General food items
+            "MEAT": [],        # Priority 3: Meat, chicken, fish
+            "OTHERS": []       # Priority 4: Everything else
+        }
+    
+    def categorize_product(self, product):
+        """Categorize product based on name"""
+        name_lower = product.name.lower()
+        
+        # Priority 1: CHEESE (any cheese product)
+        cheese_keywords = ['cheese', 'جبن', 'cream cheese', 'mozzarella', 'cheddar', 'parmesan']
+        if any(keyword in name_lower for keyword in cheese_keywords):
+            return "CHEESE"
+        
+        # Priority 2: FOOD (general food items)
+        food_keywords = [
+            'flour', 'طحين', 'sugar', 'سكر', 'rice', 'أرز', 'pasta', 'معكرونة',
+            'bread', 'خبز', 'oil', 'زيت', 'water', 'ماء', 'juice', 'عصير',
+            'coffee', 'قهوة', 'tea', 'شاي', 'chocolate', 'شوكولاتة', 'cookies', 'بسكويت',
+            'honey', 'عسل', 'dates', 'تمر', 'yogurt', 'زبادي', 'labneh', 'لبنة',
+            'cream', 'قشطة', 'butter', 'زبدة', 'milk', 'حليب', 'eggs', 'بيض'
+        ]
+        if any(keyword in name_lower for keyword in food_keywords):
+            return "FOOD"
+        
+        # Priority 3: MEAT (including chicken and fish)
+        meat_keywords = [
+            'meat', 'لحم', 'chicken', 'دجاج', 'fish', 'سمك', 'beef', 'لحم بقري',
+            'lamb', 'خروف', 'veal', 'عجل', 'turkey', 'ديك رومي', 'sausage', 'سجق',
+            'burger', 'برجر', 'steak', 'ستيك', 'ground', 'مفروم', 'fillet', 'فيليه'
+        ]
+        if any(keyword in name_lower for keyword in meat_keywords):
+            return "MEAT"
+        
+        # Priority 4: OTHERS
+        return "OTHERS"
     
     async def fetch_page(self):
         """Fetch the hot deals page and SCROLL TO THE VERY END to load ALL products"""
@@ -404,7 +443,7 @@ class TamimiScraper:
                 await browser.close()
     
     def process_products(self, products_data):
-        """Convert data to Product objects and sort by discount"""
+        """Convert data to Product objects, categorize, and sort"""
         products = []
         
         for item in products_data:
@@ -416,14 +455,14 @@ class TamimiScraper:
                     discount_percent=item.get('discount_percent', 0),
                     url=item.get('url', '')
                 )
+                
+                # Categorize the product
+                product.category = self.categorize_product(product)
                 products.append(product)
                 
             except Exception as e:
                 logger.debug(f"Error creating product: {e}")
                 continue
-        
-        # Sort by discount (highest first)
-        products.sort(key=lambda x: x.discount_percent, reverse=True)
         
         return products
     
@@ -455,46 +494,69 @@ class TamimiScraper:
             logger.error(f"❌ Failed to send: {e}")
             return False
     
-    def _create_summary_message(self, products, hot_deals):
-        """Create summary message with overview"""
-        message = f"🔥🔥🔥 <b>MASSIVE {MIN_DISCOUNT}-{MAX_DISCOUNT}% DISCOUNTS!</b> 🔥🔥🔥\n"
-        message += f"🔥🔥🔥 <b>خصومات ضخمة {MIN_DISCOUNT}-{MAX_DISCOUNT}%!</b> 🔥🔥🔥\n\n"
+    def _create_category_summary(self, category_name, products):
+        """Create a summary for a specific category"""
+        if not products:
+            return ""
         
-        message += f"📊 Scanned <b>{len(products)}</b> total products\n"
-        message += f"📊 تم مسح <b>{len(products)}</b> منتج إجمالاً\n"
-        message += f"🎯 Found <b>{len(hot_deals)}</b> items with {MIN_DISCOUNT}-{MAX_DISCOUNT}% off!\n"
-        message += f"🎯 تم العثور على <b>{len(hot_deals)}</b> منتج بخصم {MIN_DISCOUNT}-{MAX_DISCOUNT}%!\n\n"
+        # Sort products in this category by discount (highest first)
+        sorted_products = sorted(products, key=lambda x: x.discount_percent, reverse=True)
         
-        # Group by discount range
-        ranges = [(90,99), (80,89), (70,79), (60,69), (50,59)]
-        for high, low in ranges:
-            range_deals = [p for p in hot_deals if low <= p.discount_percent <= high]
-            if range_deals:
-                message += f"<b>{low}-{high}% OFF ({len(range_deals)} items):</b>\n"
-                message += f"<b>{low}-{high}% خصم ({len(range_deals)} منتج):</b>\n"
-                # Show first 2 from each range
-                for product in range_deals[:2]:
-                    arabic_name = product.get_arabic_name()
-                    message += f"  • {product.name[:20]}... ({product.discount_percent}%)\n"
-                    message += f"    {arabic_name[:20]}...\n"
-                if len(range_deals) > 2:
-                    message += f"  ... and {len(range_deals)-2} more\n"
-                    message += f"  ... و {len(range_deals)-2} منتج آخر\n"
-                message += "\n"
+        message = f"<b>{category_name} ({len(products)} items)</b>\n"
         
-        message += f"📋 <b>Detailed list in following messages ({len(hot_deals)} products)</b>\n"
-        message += f"📋 <b>القائمة التفصيلية في الرسائل التالية ({len(hot_deals)} منتج)</b>\n"
+        # Arabic translation of category
+        arabic_category = {
+            "CHEESE": "الأجبان",
+            "FOOD": "المواد الغذائية",
+            "MEAT": "اللحوم",
+            "OTHERS": "منتجات أخرى"
+        }.get(category_name, category_name)
+        
+        message += f"<b>{arabic_category} ({len(products)} منتج)</b>\n\n"
+        
+        # Show top 5 from this category
+        for i, product in enumerate(sorted_products[:5], 1):
+            arabic_name = product.get_arabic_name()
+            message += f"<b>{i}.</b> {product.name[:30]}...\n"
+            message += f"   {arabic_name[:30]}...\n"
+            message += f"   <b>{product.discount_percent}%</b> off | خصم <b>{product.discount_percent}%</b>\n"
+            message += f"   {product.current_price:.2f} SAR | {product.current_price:.2f} ريال\n"
+            
+            if product.url:
+                message += f"   <a href='{product.url}'>🔗 View</a>\n"
+            message += "\n"
+        
+        if len(sorted_products) > 5:
+            message += f"   ... and {len(sorted_products)-5} more in this category\n"
+            message += f"   ... و {len(sorted_products)-5} منتج آخر في هذه الفئة\n\n"
         
         return message
     
-    def _create_product_chunk_message(self, products_chunk, start_num, end_num):
-        """Create a message chunk with product details"""
-        message = f"<b>Products {start_num}-{end_num} of {len(self.hot_deals)} | المنتجات {start_num}-{end_num}</b>\n\n"
+    def _create_detailed_category_message(self, category_name, products, start_num):
+        """Create a detailed message for a category's products"""
+        if not products:
+            return "", start_num
         
-        for i, product in enumerate(products_chunk, start_num):
+        # Sort products in this category by discount (highest first)
+        sorted_products = sorted(products, key=lambda x: x.discount_percent, reverse=True)
+        
+        message = f"<b>{category_name} - All Items ({len(products)})</b>\n"
+        
+        # Arabic translation
+        arabic_category = {
+            "CHEESE": "الأجبان",
+            "FOOD": "المواد الغذائية",
+            "MEAT": "اللحوم",
+            "OTHERS": "منتجات أخرى"
+        }.get(category_name, category_name)
+        
+        message += f"<b>{arabic_category} - جميع المنتجات ({len(products)})</b>\n\n"
+        
+        current_num = start_num
+        for product in sorted_products:
             arabic_name = product.get_arabic_name()
-            message += f"<b>{i}.</b> {product.name}\n"
-            message += f"<b>{i}.</b> {arabic_name}\n"
+            message += f"<b>{current_num}.</b> {product.name}\n"
+            message += f"<b>{current_num}.</b> {arabic_name}\n"
             message += f"   <b>{product.discount_percent}%</b> off | خصم <b>{product.discount_percent}%</b>\n"
             if product.original_price:
                 message += f"   <s>{product.original_price:.2f}</s> → {product.current_price:.2f} SAR\n"
@@ -504,11 +566,13 @@ class TamimiScraper:
             if product.url:
                 message += f"   <a href='{product.url}'>🔗 View Product | عرض المنتج</a>\n"
             message += "\n"
+            
+            current_num += 1
         
-        return message
+        return message, current_num
     
     def send_telegram_alert(self, products):
-        """Send alert for products with 50-99% discounts with Arabic translations"""
+        """Send alert for products with 50-99% discounts, categorized and prioritized"""
         global TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
         
         if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -519,11 +583,11 @@ class TamimiScraper:
         logger.info(f"📊 Total products received: {len(products)}")
         
         # Filter for 50-99% discounts
-        self.hot_deals = [p for p in products if MIN_DISCOUNT <= p.discount_percent <= MAX_DISCOUNT]
-        logger.info(f"🔥 Hot deals found: {len(self.hot_deals)}")
+        hot_deals = [p for p in products if MIN_DISCOUNT <= p.discount_percent <= MAX_DISCOUNT]
+        logger.info(f"🔥 Hot deals found: {len(hot_deals)}")
         
         # If no hot deals, send a simple message
-        if not self.hot_deals:
+        if not hot_deals:
             message = f"🔍 <b>Tamimi Monitor - No {MIN_DISCOUNT}-{MAX_DISCOUNT}% Deals</b>\n"
             message += f"🔍 <b>مراقب التميمي - لا توجد عروض {MIN_DISCOUNT}-{MAX_DISCOUNT}%</b>\n\n"
             message += f"📊 Total products scanned: <b>{len(products)}</b>\n"
@@ -531,34 +595,101 @@ class TamimiScraper:
             self._send_telegram_message(message)
             return
         
-        # Split hot deals into chunks of 8 products per message (to avoid length issues)
-        chunk_size = 8
-        message_chunks = []
+        # Categorize the hot deals
+        categorized = {
+            "CHEESE": [],
+            "FOOD": [],
+            "MEAT": [],
+            "OTHERS": []
+        }
         
-        # Create summary message first
-        summary = self._create_summary_message(products, self.hot_deals)
-        message_chunks.append(summary)
+        for product in hot_deals:
+            category = self.categorize_product(product)
+            categorized[category].append(product)
         
-        # Create product detail messages in chunks
-        for i in range(0, len(self.hot_deals), chunk_size):
-            chunk = self.hot_deals[i:i+chunk_size]
-            chunk_message = self._create_product_chunk_message(chunk, i+1, i+len(chunk))
-            message_chunks.append(chunk_message)
+        # Sort each category by discount (highest first)
+        for category in categorized:
+            categorized[category].sort(key=lambda x: x.discount_percent, reverse=True)
         
-        # Send all messages
-        logger.info(f"📤 Sending {len(message_chunks)} messages to Telegram...")
-        for idx, msg in enumerate(message_chunks):
-            logger.info(f"📤 Sending message {idx+1}/{len(message_chunks)}...")
-            success = self._send_telegram_message(msg)
+        # Log category counts
+        logger.info("📊 Category breakdown:")
+        for category, items in categorized.items():
+            logger.info(f"   {category}: {len(items)} items")
+        
+        # ===== SEND SUMMARY MESSAGE =====
+        summary = f"🔥🔥🔥 <b>MASSIVE {MIN_DISCOUNT}-{MAX_DISCOUNT}% DISCOUNTS!</b> 🔥🔥🔥\n"
+        summary += f"🔥🔥🔥 <b>خصومات ضخمة {MIN_DISCOUNT}-{MAX_DISCOUNT}%!</b> 🔥🔥🔥\n\n"
+        
+        summary += f"📊 Scanned <b>{len(products)}</b> total products\n"
+        summary += f"📊 تم مسح <b>{len(products)}</b> منتج إجمالاً\n"
+        summary += f"🎯 Found <b>{len(hot_deals)}</b> items with {MIN_DISCOUNT}-{MAX_DISCOUNT}% off!\n"
+        summary += f"🎯 تم العثور على <b>{len(hot_deals)}</b> منتج بخصم {MIN_DISCOUNT}-{MAX_DISCOUNT}%!\n\n"
+        
+        # Add category summaries in priority order
+        category_order = ["CHEESE", "FOOD", "MEAT", "OTHERS"]
+        category_names = {
+            "CHEESE": "🧀 CHEESE / الأجبان",
+            "FOOD": "🍞 FOOD / المواد الغذائية",
+            "MEAT": "🥩 MEAT / اللحوم",
+            "OTHERS": "📦 OTHER PRODUCTS / منتجات أخرى"
+        }
+        
+        for cat in category_order:
+            if categorized[cat]:
+                summary += f"<b>{category_names[cat]}: {len(categorized[cat])} items</b>\n"
+                # Show top 2 from each category
+                for i, product in enumerate(categorized[cat][:2], 1):
+                    arabic_name = product.get_arabic_name()
+                    summary += f"  {i}. {product.name[:20]}... ({product.discount_percent}%)\n"
+                    summary += f"     {arabic_name[:20]}...\n"
+                if len(categorized[cat]) > 2:
+                    summary += f"     ... and {len(categorized[cat])-2} more\n"
+                    summary += f"     ... و {len(categorized[cat])-2} منتج آخر\n"
+                summary += "\n"
+        
+        summary += f"📋 <b>Detailed lists by category in following messages</b>\n"
+        summary += f"📋 <b>القوائم التفصيلية حسب الفئة في الرسائل التالية</b>\n"
+        
+        self._send_telegram_message(summary)
+        time.sleep(2)
+        
+        # ===== SEND DETAILED CATEGORY MESSAGES =====
+        product_counter = 1
+        
+        for cat in category_order:
+            if not categorized[cat]:
+                continue
             
-            if not success:
-                logger.error(f"❌ Failed to send message {idx+1}")
-            
-            # Small delay between messages to avoid rate limiting
-            if idx < len(message_chunks) - 1:
+            # Split category products into chunks of 8
+            chunk_size = 8
+            for i in range(0, len(categorized[cat]), chunk_size):
+                chunk = categorized[cat][i:i+chunk_size]
+                
+                cat_name = category_names[cat].split(" / ")[0]
+                start_num = product_counter
+                end_num = product_counter + len(chunk) - 1
+                
+                message = f"<b>{cat_name} - Items {start_num}-{end_num} of {len(hot_deals)}</b>\n\n"
+                
+                for j, product in enumerate(chunk, start_num):
+                    arabic_name = product.get_arabic_name()
+                    message += f"<b>{j}.</b> {product.name}\n"
+                    message += f"<b>{j}.</b> {arabic_name}\n"
+                    message += f"   <b>{product.discount_percent}%</b> off | خصم <b>{product.discount_percent}%</b>\n"
+                    if product.original_price:
+                        message += f"   <s>{product.original_price:.2f}</s> → {product.current_price:.2f} SAR\n"
+                    else:
+                        message += f"   Now {product.current_price:.2f} SAR | الآن {product.current_price:.2f} ريال\n"
+                    
+                    if product.url:
+                        message += f"   <a href='{product.url}'>🔗 View Product | عرض المنتج</a>\n"
+                    message += "\n"
+                
+                self._send_telegram_message(message)
+                product_counter += len(chunk)
                 time.sleep(2)
         
-        logger.info(f"✅ All {len(message_chunks)} messages processed!")
+        logger.info(f"✅ All categorized messages sent successfully!")
     
     async def run(self):
         """Main execution"""
