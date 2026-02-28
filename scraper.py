@@ -251,14 +251,12 @@ class TamimiScraper:
     
     def send_telegram_alert(self, products):
         """Send alert for products with 50-99% discounts"""
+        # Use the global variables - don't try to reassign them
+        global TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+        
         if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
             logger.error("❌ Missing Telegram credentials - Check your secrets!")
-            # Try to send a test message anyway
-            TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-            TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
-            if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-                logger.error("❌ Still missing credentials after second attempt")
-                return
+            return
         
         logger.info(f"📤 Preparing to send Telegram message...")
         logger.info(f"📊 Total products received: {len(products)}")
@@ -331,7 +329,6 @@ class TamimiScraper:
         try:
             response = requests.post(url, json=payload, timeout=30)
             logger.info(f"📥 Telegram response status: {response.status_code}")
-            logger.info(f"📥 Telegram response body: {response.text[:200]}")
             
             if response.status_code == 200:
                 logger.info(f"✅ Telegram alert sent successfully!")
