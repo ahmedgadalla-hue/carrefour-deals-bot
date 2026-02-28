@@ -1,6 +1,6 @@
 """
 Tamimi Markets Hot Deals Monitor - 50-99% DISCOUNTS
-Improved discount detection to find ALL products
+With Arabic translations for each product
 """
 
 import os
@@ -25,6 +25,123 @@ MAX_DISCOUNT = 99  # Maximum discount to report (99%)
 
 BASE_URL = "https://shop.tamimimarkets.com"
 HOT_DEALS_URL = f"{BASE_URL}/en/hot-deals"
+
+# Arabic translations for common product terms
+TRANSLATIONS = {
+    # Food items
+    "Flour": "طحين",
+    "Sugar": "سكر",
+    "Rice": "أرز",
+    "Pasta": "معكرونة",
+    "Bread": "خبز",
+    "Milk": "حليب",
+    "Cheese": "جبن",
+    "Butter": "زبدة",
+    "Yogurt": "زبادي",
+    "Labneh": "لبنة",
+    "Cream": "قشطة",
+    "Eggs": "بيض",
+    "Chicken": "دجاج",
+    "Meat": "لحم",
+    "Fish": "سمك",
+    "Vegetables": "خضروات",
+    "Fruits": "فواكه",
+    "Oil": "زيت",
+    "Water": "ماء",
+    "Juice": "عصير",
+    "Coffee": "قهوة",
+    "Tea": "شاي",
+    "Chocolate": "شوكولاتة",
+    "Cookies": "بسكويت",
+    "Chips": "رقائق",
+    "Honey": "عسل",
+    "Dates": "تمر",
+    
+    # Brands
+    "Almarai": "المراعي",
+    "Nadec": "نادك",
+    "Aloula": "الأولى",
+    "Tamimi": "التميمي",
+    "Saudia": "سعودية",
+    "Goody": "جودي",
+    "Sunbulah": "سنبلة",
+    "Kuwait Bakeries": "مخابز الكويت",
+    "Puck": "بك",
+    "Philadelphia": "فيلادلفيا",
+    "Lurpak": "لورباك",
+    "President": "بريزيدنت",
+    "Nova": "نوفا",
+    "Driscoll's": "دريسكول",
+    "Alosra": "الأوسرة",
+    "Qoot & Root": "قوت وروت",
+    "Riyadh Food": "رياض فود",
+    "Foom": "فوم",
+    "Greens": "جرينز",
+    
+    # Common words
+    "Fresh": "طازج",
+    "Organic": "عضوي",
+    "Full Fat": "كامل الدسم",
+    "Low Fat": "قليل الدسم",
+    "Skimmed": "منزوع الدسم",
+    "With": "مع",
+    "Without": "بدون",
+    "And": "و",
+    "Pack": "عبوة",
+    "Box": "علبة",
+    "Bottle": "قارورة",
+    "Bag": "كيس",
+    "Can": "معلبة",
+    "Jar": "برطمان",
+    "Piece": "قطعة",
+    "Each": "للحبة",
+    "Promo": "عرض",
+    "Offer": "عرض خاص",
+    "Save": "وفر",
+    "Discount": "خصم",
+    "Price": "السعر",
+    "Now": "الآن",
+    "Was": "كان",
+    
+    # Measurements
+    "G": "جرام",
+    "Kg": "كيلو",
+    "ML": "مل",
+    "L": "لتر",
+    "Cm": "سم",
+    "Inch": "بوصة",
+    
+    # Product types
+    "Premium": "ممتاز",
+    "Superior": "فاخر",
+    "Original": "أصلي",
+    "Classic": "كلاسيك",
+    "Regular": "عادي",
+    "Extra": "إضافي",
+    "Large": "كبير",
+    "Small": "صغير",
+    "Medium": "وسط",
+    "Family": "عائلي",
+    "Party": "حفلات",
+    
+    # Colors
+    "White": "أبيض",
+    "Brown": "بني",
+    "Red": "أحمر",
+    "Green": "أخضر",
+    "Yellow": "أصفر",
+    "Blue": "أزرق",
+    "Black": "أسود",
+    
+    # Other
+    "Free": "مجاني",
+    "Limited": "محدود",
+    "New": "جديد",
+    "Special": "خاص",
+    "Best": "أفضل",
+    "Value": "قيمة",
+    "Quality": "جودة"
+}
 # =================================================
 
 logging.basicConfig(
@@ -44,6 +161,21 @@ class Product:
     
     def to_dict(self):
         return asdict(self)
+    
+    def get_arabic_name(self):
+        """Translate product name to Arabic"""
+        arabic_name = self.name
+        
+        # Replace common terms with Arabic translations
+        for english, arabic in TRANSLATIONS.items():
+            # Case-insensitive replacement
+            pattern = re.compile(re.escape(english), re.IGNORECASE)
+            arabic_name = pattern.sub(arabic, arabic_name)
+        
+        # Remove extra spaces
+        arabic_name = re.sub(r'\s+', ' ', arabic_name).strip()
+        
+        return arabic_name
 
 
 class TamimiScraper:
@@ -169,9 +301,6 @@ class TamimiScraper:
                                     if (anyMatch) discount = parseInt(anyMatch[1]);
                                 }
                                 
-                                // Method 5: Calculate from prices if available
-                                // This will be done after we extract prices
-                                
                                 // Get current price
                                 let currentPrice = 0;
                                 const priceElem = element.querySelector('[class*="Price__SellingPrice"]');
@@ -190,7 +319,7 @@ class TamimiScraper:
                                     if (originalMatch) originalPrice = parseFloat(originalMatch[1]);
                                 }
                                 
-                                // Method 5 (continued): Calculate discount from prices
+                                // Method 5: Calculate discount from prices
                                 if (discount === 0 && originalPrice && currentPrice && originalPrice > currentPrice) {
                                     discount = Math.round(((originalPrice - currentPrice) / originalPrice) * 100);
                                 }
@@ -228,9 +357,7 @@ class TamimiScraper:
                                         current_price: currentPrice,
                                         original_price: originalPrice,
                                         discount_percent: discount,
-                                        url: url,
-                                        // Add raw text for debugging
-                                        debug_text: allText.substring(0, 100)
+                                        url: url
                                     });
                                 }
                             } catch (e) {
@@ -299,7 +426,7 @@ class TamimiScraper:
         return products
     
     def send_telegram_alert(self, products):
-        """Send alert for products with 50-99% discounts"""
+        """Send alert for products with 50-99% discounts with Arabic translations"""
         global TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
         
         if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -313,10 +440,13 @@ class TamimiScraper:
         hot_deals = [p for p in products if MIN_DISCOUNT <= p.discount_percent <= MAX_DISCOUNT]
         logger.info(f"🔥 Hot deals found: {len(hot_deals)}")
         
-        # Prepare message
+        # Prepare message with bilingual format (English + Arabic)
         if not hot_deals:
-            message = f"🔍 <b>Tamimi Monitor - No {MIN_DISCOUNT}-{MAX_DISCOUNT}% Deals</b>\n\n"
-            message += f"📊 Total products scanned: <b>{len(products)}</b>\n\n"
+            message = f"🔍 <b>Tamimi Monitor - No {MIN_DISCOUNT}-{MAX_DISCOUNT}% Deals</b>\n"
+            message += f"🔍 <b>مراقب التميمي - لا توجد عروض {MIN_DISCOUNT}-{MAX_DISCOUNT}%</b>\n\n"
+            
+            message += f"📊 Total products scanned: <b>{len(products)}</b>\n"
+            message += f"📊 إجمالي المنتجات الممسوحة: <b>{len(products)}</b>\n\n"
             
             if products:
                 # Count by discount range
@@ -326,29 +456,33 @@ class TamimiScraper:
                     (10, 19), (1, 9), (0, 0)
                 ]
                 
-                message += "📈 <b>All Discounts Found:</b>\n"
+                message += "📈 <b>All Discounts Found / جميع الخصومات الموجودة:</b>\n"
                 for high, low in ranges:
                     if low == high:
                         count = len([p for p in products if p.discount_percent == low])
+                        if count > 0:
+                            message += f"  • {low}%: {count} items\n"
                     else:
                         count = len([p for p in products if low <= p.discount_percent <= high])
-                    if count > 0:
-                        if low == high:
-                            message += f"  • {low}%: {count} items\n"
-                        else:
+                        if count > 0:
                             message += f"  • {low}-{high}%: {count} items\n"
                 
                 # Show top 20 deals
-                message += f"\n🏆 <b>Top 20 Deals Today:</b>\n"
+                message += f"\n🏆 <b>Top 20 Deals Today / أفضل 20 عرض اليوم:</b>\n"
                 for i, product in enumerate(products[:20], 1):
-                    safe_name = pyhtml.escape(product.name[:30])
-                    message += f"  {i}. {safe_name}... - <b>{product.discount_percent}%</b>\n"
+                    arabic_name = product.get_arabic_name()
+                    message += f"  {i}. {product.name[:30]}... - <b>{product.discount_percent}%</b>\n"
+                    message += f"     {arabic_name[:30]}...\n"
             
         else:
             # We have 50-99% deals
-            message = f"🔥🔥🔥 <b>MASSIVE {MIN_DISCOUNT}-{MAX_DISCOUNT}% DISCOUNTS!</b> 🔥🔥🔥\n\n"
+            message = f"🔥🔥🔥 <b>MASSIVE {MIN_DISCOUNT}-{MAX_DISCOUNT}% DISCOUNTS!</b> 🔥🔥🔥\n"
+            message += f"🔥🔥🔥 <b>خصومات ضخمة {MIN_DISCOUNT}-{MAX_DISCOUNT}%!</b> 🔥🔥🔥\n\n"
+            
             message += f"📊 Scanned <b>{len(products)}</b> total products\n"
-            message += f"🎯 Found <b>{len(hot_deals)}</b> items with {MIN_DISCOUNT}-{MAX_DISCOUNT}% off!\n\n"
+            message += f"📊 تم مسح <b>{len(products)}</b> منتج إجمالاً\n"
+            message += f"🎯 Found <b>{len(hot_deals)}</b> items with {MIN_DISCOUNT}-{MAX_DISCOUNT}% off!\n"
+            message += f"🎯 تم العثور على <b>{len(hot_deals)}</b> منتج بخصم {MIN_DISCOUNT}-{MAX_DISCOUNT}%!\n\n"
             
             # Group by discount range
             ranges = [(90,99), (80,89), (70,79), (60,69), (50,59)]
@@ -356,32 +490,36 @@ class TamimiScraper:
                 range_deals = [p for p in hot_deals if low <= p.discount_percent <= high]
                 if range_deals:
                     message += f"<b>{low}-{high}% OFF ({len(range_deals)} items):</b>\n"
+                    message += f"<b>{low}-{high}% خصم ({len(range_deals)} منتج):</b>\n"
                     # Show first 3 from each range
                     for product in range_deals[:3]:
-                        safe_name = pyhtml.escape(product.name[:25])
-                        message += f"  • {safe_name}... ({product.discount_percent}%)\n"
+                        arabic_name = product.get_arabic_name()
+                        message += f"  • {product.name[:25]}... ({product.discount_percent}%)\n"
+                        message += f"    {arabic_name[:25]}...\n"
                     if len(range_deals) > 3:
                         message += f"  ... and {len(range_deals)-3} more\n"
+                        message += f"  ... و {len(range_deals)-3} منتج آخر\n"
                     message += "\n"
             
-            # Show all hot deals (limit to 30)
-            message += f"<b>Complete List of {MIN_DISCOUNT}-{MAX_DISCOUNT}% Deals:</b>\n\n"
+            # Show all hot deals (limit to 20 to avoid message too long)
+            message += f"<b>Complete List of {MIN_DISCOUNT}-{MAX_DISCOUNT}% Deals / قائمة الخصومات:</b>\n\n"
             
-            for i, product in enumerate(hot_deals[:30], 1):
-                safe_name = pyhtml.escape(product.name[:40])
-                message += f"<b>{i}.</b> {safe_name}\n"
-                message += f"   <b>{product.discount_percent}%</b> off"
+            for i, product in enumerate(hot_deals[:20], 1):
+                arabic_name = product.get_arabic_name()
+                message += f"<b>{i}.</b> {product.name}\n"
+                message += f"<b>{i}.</b> {arabic_name}\n"
+                message += f"   <b>{product.discount_percent}%</b> off | خصم <b>{product.discount_percent}%</b>\n"
                 if product.original_price:
-                    message += f" | <s>{product.original_price:.2f}</s> → {product.current_price:.2f} SAR"
+                    message += f"   <s>{product.original_price:.2f}</s> → {product.current_price:.2f} SAR\n"
                 else:
-                    message += f" | Now {product.current_price:.2f} SAR"
+                    message += f"   Now {product.current_price:.2f} SAR | الآن {product.current_price:.2f} ريال\n"
                 
                 if product.url:
-                    message += f"\n   <a href='{product.url}'>🔗 View Product</a>"
-                message += "\n\n"
+                    message += f"   <a href='{product.url}'>🔗 View Product | عرض المنتج</a>\n"
+                message += "\n"
             
-            if len(hot_deals) > 30:
-                message += f"...and {len(hot_deals)-30} more deals!"
+            if len(hot_deals) > 20:
+                message += f"...and {len(hot_deals)-20} more deals! | و {len(hot_deals)-20} عروض أخرى!\n"
         
         # Send to Telegram
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -426,7 +564,7 @@ class TamimiScraper:
             logger.error("❌ No products found")
             # Send error message
             if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-                error_msg = "⚠️ <b>Tamimi Monitor Error</b>\n\nNo products were found on the page. Check the debug files."
+                error_msg = "⚠️ <b>Tamimi Monitor Error</b>\n⚠️ <b>خطأ في مراقب التميمي</b>\n\nNo products were found on the page. Check the debug files.\nلم يتم العثور على منتجات في الصفحة. تحقق من ملفات التصحيح."
                 url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
                 try:
                     requests.post(url, json={
