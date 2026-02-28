@@ -7,7 +7,7 @@ from dataclasses import dataclass, asdict
 import html as pyhtml
 
 from playwright.async_api import async_playwright
-from playwright_stealth import stealth_async
+from playwright_stealth import stealth  # Fixed import
 import requests
 
 # ================= CONFIGURATION =================
@@ -47,13 +47,15 @@ class TamimiScraper:
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             )
             page = await context.new_page()
-            await stealth_async(page)
+            
+            # Use the corrected stealth function
+            await stealth(page)
             
             try:
                 logger.info(f"Navigating to {HOT_DEALS_URL}")
                 await page.goto(HOT_DEALS_URL, wait_until='networkidle', timeout=60000)
                 
-                # Dynamic scroll to trigger lazy loading of all products
+                # Scroll to load products
                 for _ in range(5):
                     await page.mouse.wheel(0, 2000)
                     await page.wait_for_timeout(1000)
@@ -73,12 +75,10 @@ class TamimiScraper:
         soup = BeautifulSoup(page_html, 'html.parser')
         found_products = []
         
-        # Look for the percentage sign which is consistent across all deals
         discount_badges = soup.find_all(string=re.compile(r'\d+%'))
         
         for badge in discount_badges:
             try:
-                # Move up to find the container
                 container = badge.parent
                 for _ in range(6):
                     if container and ('SAR' in container.get_text().upper()):
@@ -88,26 +88,20 @@ class TamimiScraper:
                 if not container: continue
 
                 text = container.get_text(separator=' ', strip=True)
-                
-                # Extract Discount
                 dist_match = re.search(r'(\d+)%', text)
                 pct = int(dist_match.group(1)) if dist_match else 0
                 
-                # Extract Price
                 price_match = re.search(r'SAR\s*(\d+\.?\d*)', text, re.IGNORECASE)
                 if not price_match: continue
                 price = float(price_match.group(1))
 
-                # Extract Name
                 name_tag = container.find(['h2', 'h3', 'h4', 'h5', 'strong'])
                 name = name_tag.get_text(strip=True) if name_tag else "Unknown Product"
                 
-                # Extract Link
                 link_tag = container.find('a', href=True)
                 url = BASE_URL + link_tag['href'] if link_tag else ""
 
                 original = round(price / (1 - pct/100), 2) if pct > 0 else None
-
                 found_products.append(Product(name, price, original, pct, url))
             except:
                 continue
@@ -119,7 +113,7 @@ class TamimiScraper:
         else:
             deals.sort(key=lambda x: x.discount_percent, reverse=True)
             message = f"🔥 <b>TAMIMI HOT DEALS ({DISCOUNT_THRESHOLD}%+)</b> 🔥\n\n"
-            for i, d in enumerate(deals[:15], 1): # Show top 15 deals
+            for i, d in enumerate(deals[:15], 1):
                 name = pyhtml.escape(d.name[:50])
                 message += f"<b>{i}. {name}</b>\n"
                 if d.original_price:
