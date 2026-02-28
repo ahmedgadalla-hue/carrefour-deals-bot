@@ -2,12 +2,12 @@ name: Tamimi Hot Deals Monitor
 
 on:
   schedule:
-    - cron: '0 */3 * * *'  # Every 3 hours
+    - cron: '0 */2 * * *'  # Every 2 hours
   workflow_dispatch:
 
 jobs:
   monitor-deals:
-    runs-on: ubuntu-22.04  # IMPORTANT: Use 22.04 not latest
+    runs-on: ubuntu-22.04
     
     steps:
     - name: Checkout repository
@@ -18,29 +18,24 @@ jobs:
       with:
         python-version: '3.10'
     
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libnss3 libnspr4 libatk-bridge2.0-0 libdrm2 libxkbcommon0 libgbm1
-    
-    - name: Install Python dependencies
+    - name: Install dependencies
       run: |
         pip install -r requirements.txt
-        playwright install chromium
+        playwright install chromium --with-deps
     
     - name: Run scraper
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        DISCOUNT_THRESHOLD: 50  # <--- Change this back to 50
+        DISCOUNT_THRESHOLD: 50
       run: python scraper.py
-    
-    - name: Upload debug files
-      if: always()
+
+    - name: Upload Debug Artifacts
+      if: always() 
       uses: actions/upload-artifact@v4
       with:
-        name: debug-files
+        name: scraper-debug-files
         path: |
-          *.png
-          *.html
-          *.json
+          tamimi_deals.png
+          tamimi_page.html
+        retention-days: 3
