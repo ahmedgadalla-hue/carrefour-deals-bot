@@ -1,5 +1,6 @@
 """
-Tamimimarkets Hot Deals Monitor - FIXED VERSION
+Tamimimarkets Hot Deals Monitor - FULLY UPDATED
+Includes HTML debug saving and HTML parsing for Telegram
 """
 
 import os
@@ -8,7 +9,7 @@ import logging
 import asyncio
 from typing import Optional
 from dataclasses import dataclass, asdict
-import html as pyhtml  # Added to safely escape text for Telegram
+import html as pyhtml  # Safely escape text for Telegram
 
 from playwright.async_api import async_playwright
 import requests
@@ -61,7 +62,13 @@ class TamimiScraper:
                 page_html = await page.content()
                 logger.info(f"Page loaded, HTML length: {len(page_html)}")
                 
+                # Save screenshot for debugging
                 await page.screenshot(path="tamimi_deals.png")
+                
+                # Save HTML for debugging
+                with open("tamimi_page.html", "w", encoding="utf-8") as f:
+                    f.write(page_html)
+                
                 return page_html
                 
             except Exception as e:
@@ -76,7 +83,7 @@ class TamimiScraper:
         soup = BeautifulSoup(page_html, 'html.parser')
         products = []
         
-        # FIX: Changed 'text' to 'string' for BeautifulSoup 4.12+ compatibility
+        # Using 'string' instead of 'text' for newer BeautifulSoup versions
         discount_elements = soup.find_all(string=re.compile(r'\d+%\s*خصم'))
         logger.info(f"Found {len(discount_elements)} discount badges")
         
@@ -191,7 +198,7 @@ class TamimiScraper:
     def send_telegram_alert(self, products):
         if not products:
             message = "🔍 <b>Tamimi Monitor Run</b>\n\n"
-            message += "No products with ≥50% discount found this time.\n"
+            message += f"No products with ≥{DISCOUNT_THRESHOLD}% discount found this time.\n"
             message += "I'll keep watching for you! 🤖"
             
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -199,7 +206,7 @@ class TamimiScraper:
                 requests.post(url, json={
                     'chat_id': TELEGRAM_CHAT_ID,
                     'text': message,
-                    'parse_mode': 'HTML' # Changed to HTML
+                    'parse_mode': 'HTML'
                 })
                 logger.info("Sent no-deals message to Telegram")
             except:
@@ -208,19 +215,17 @@ class TamimiScraper:
         
         products.sort(key=lambda x: x.discount_percent, reverse=True)
         
-        # FIX: Changed completely to HTML formatting
         message = f"🔥 <b>تميمي ماركتس - عروض حصرية</b> 🔥\n"
         message += f"🔥 <b>TAMIMIMARKETS - HOT DEALS</b> 🔥\n\n"
         message += f"تم العثور على <b>{len(products)}</b> منتج بتخفيض ≥{DISCOUNT_THRESHOLD}%\n"
         message += f"Found <b>{len(products)}</b> items with ≥{DISCOUNT_THRESHOLD}% off\n\n"
         
         for i, product in enumerate(products[:10], 1):
-            # Escape the product name so rogue characters don't break Telegram
+            # Escape the product name so rogue characters don't break Telegram HTML
             safe_name = pyhtml.escape(product.name[:50])
             message += f"<b>{i}. {safe_name}</b>\n"
             
             if product.original_price:
-                # HTML supports the <s> tag for strikethrough
                 message += f"   <s>{product.original_price:.2f}</s> → "
             message += f"<b>{product.current_price:.2f} SAR</b>"
             message += f"  (-{product.discount_percent}% 🔥)\n"
@@ -237,7 +242,7 @@ class TamimiScraper:
             response = requests.post(url, json={
                 'chat_id': TELEGRAM_CHAT_ID,
                 'text': message,
-                'parse_mode': 'HTML', # Changed to HTML
+                'parse_mode': 'HTML',
                 'disable_web_page_preview': False
             })
             
