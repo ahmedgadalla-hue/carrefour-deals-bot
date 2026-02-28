@@ -1,6 +1,6 @@
 """
 Tamimi Markets Hot Deals Monitor - 69%+ DISCOUNTS ONLY
-Sends alerts only for items with 69% or more discount
+With improved scrolling to catch ALL products
 """
 
 import os
@@ -20,7 +20,7 @@ import requests
 # ================= CONFIGURATION =================
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-DISCOUNT_THRESHOLD = 69  # CHANGED: Now 69% (will catch 69%, 70%, 71%, etc.)
+DISCOUNT_THRESHOLD = 69  # Looking for 69%+
 
 BASE_URL = "https://shop.tamimimarkets.com"
 HOT_DEALS_URL = f"{BASE_URL}/en/hot-deals"
@@ -50,7 +50,7 @@ class TamimiScraper:
         self.products = []
     
     async def fetch_page(self):
-        """Fetch page with stealth techniques"""
+        """Fetch page with aggressive scrolling to load ALL products"""
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
@@ -75,23 +75,54 @@ class TamimiScraper:
                 
                 await asyncio.sleep(random.uniform(2, 4))
                 await page.goto(HOT_DEALS_URL, wait_until='domcontentloaded', timeout=60000)
+                
+                # Wait for initial content to load
                 await page.wait_for_timeout(5000)
                 
-                # Scroll to load all products
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await page.wait_for_timeout(3000)
+                # SCROLL MULTIPLE TIMES to load all products
+                logger.info("Scrolling to load all products...")
+                
+                # Get initial height
+                last_height = await page.evaluate("document.body.scrollHeight")
+                
+                for scroll_attempt in range(5):  # Try up to 5 scrolls
+                    # Scroll to bottom
+                    await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    await page.wait_for_timeout(3000)  # Wait for content to load
+                    
+                    # Check if we've reached the end
+                    new_height = await page.evaluate("document.body.scrollHeight")
+                    if new_height == last_height:
+                        logger.info(f"Reached bottom after {scroll_attempt + 1} scrolls")
+                        break
+                    last_height = new_height
+                    logger.info(f"Scroll {scroll_attempt + 1} complete, new height: {new_height}")
+                
+                # Scroll back up slowly to trigger any lazy loading
+                await page.evaluate("window.scrollTo(0, 0)")
+                await page.wait_for_timeout(2000)
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight/2)")
+                await page.wait_for_timeout(2000)
                 
                 # Get page content
                 html_content = await page.content()
                 
+                # Count products in the page
+                product_count = await page.evaluate("""
+                    () => {
+                        return document.querySelectorAll('[data-testid="product"]').length
+                    }
+                """)
+                logger.info(f"Found {product_count} products in DOM")
+                
                 # Save debug files
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                await page.screenshot(path=f"tamimi_deals_{timestamp}.png")
+                await page.screenshot(path=f"tamimi_deals_{timestamp}.png", full_page=True)
                 
                 with open(f"tamimi_page_{timestamp}.html", "w", encoding="utf-8") as f:
                     f.write(html_content)
                 
-                logger.info(f"✅ Page loaded: {len(html_content)} chars")
+                logger.info(f"✅ Page loaded: {len(html_content)} chars, {product_count} products visible")
                 return html_content
                 
             except Exception as e:
@@ -101,68 +132,122 @@ class TamimiScraper:
                 await browser.close()
     
     def parse_products(self, html_content):
-        """Parse products using exact selectors from the website"""
+        """Parse products using multiple selectors to catch ALL products"""
         from bs4 import BeautifulSoup
         
         soup = BeautifulSoup(html_content, 'html.parser')
         products = []
         
-        # Find all product containers
+        # METHOD 1: Find by data-testid (primary method)
         product_containers = soup.find_all('div', attrs={'data-testid': 'product'})
-        logger.info(f"Found {len(product_containers)} products with data-testid='product'")
+        logger.info(f"Method 1 - Found {len(product_containers)} products with data-testid='product'")
+        
+        # METHOD 2: Find by product link class
+        if len(product_containers) < 50:
+            alt_containers = soup.find_all('a', class_=re.compile(r'Product__StyledA'))
+            logger.info(f"Method 2 - Found {len(alt_containers)} products with Product__StyledA class")
+            if len(alt_containers) > len(product_containers):
+                product_containers = alt_containers
+        
+        # METHOD 3: Find any div with product in class
+        if len(product_containers) < 50:
+            generic_containers = soup.find_all('div', class_=re.compile(r'product|item|card', re.I))
+            logger.info(f"Method 3 - Found {len(generic_containers)} generic product containers")
+            if len(generic_containers) > len(product_containers):
+                product_containers = generic_containers
+        
+        logger.info(f"Total unique product containers to parse: {len(product_containers)}")
         
         for container in product_containers:
             try:
-                # Find discount
+                # Try multiple ways to find discount
+                discount = 0
+                
+                # Method A: Find discount in Product__StyledDiscount class
                 discount_elem = container.find('div', class_=re.compile(r'Product__StyledDiscount'))
-                if not discount_elem:
-                    continue
-                    
-                discount_text = discount_elem.get_text(strip=True)
-                discount_match = re.search(r'(\d+)%', discount_text)
-                if not discount_match:
-                    continue
-                discount = int(discount_match.group(1))
+                if discount_elem:
+                    discount_text = discount_elem.get_text(strip=True)
+                    discount_match = re.search(r'(\d+)%', discount_text)
+                    if discount_match:
+                        discount = int(discount_match.group(1))
+                
+                # Method B: Look for any element with % sign
+                if discount == 0:
+                    all_text = container.get_text()
+                    percent_matches = re.findall(r'(\d+)%', all_text)
+                    if percent_matches:
+                        discount = max([int(m) for m in percent_matches])  # Take the highest percentage
+                
+                if discount == 0:
+                    continue  # Skip if no discount found
                 
                 # Find current price
-                current_price_elem = container.find('span', class_=re.compile(r'Price__SellingPrice'))
-                if not current_price_elem:
+                current_price = None
+                
+                # Method A: Find in Price__SellingPrice class
+                price_elem = container.find('span', class_=re.compile(r'Price__SellingPrice'))
+                if price_elem:
+                    price_text = price_elem.get_text(strip=True)
+                    try:
+                        current_price = float(price_text)
+                    except:
+                        pass
+                
+                # Method B: Look for price pattern
+                if not current_price:
+                    all_text = container.get_text()
+                    price_matches = re.findall(r'(\d+\.?\d*)\s*SAR', all_text)
+                    if price_matches:
+                        try:
+                            current_price = float(price_matches[0])
+                        except:
+                            pass
+                
+                if not current_price:
                     continue
-                    
-                current_price_text = current_price_elem.get_text(strip=True)
-                current_price = float(current_price_text)
                 
                 # Find original price
                 original_price = None
-                original_price_elem = container.find('span', class_=re.compile(r'Price__SellingPriceOutDated'))
-                if original_price_elem:
-                    original_price_text = original_price_elem.get_text(strip=True)
-                    original_price = float(original_price_text)
+                original_elem = container.find('span', class_=re.compile(r'Price__SellingPriceOutDated'))
+                if original_elem:
+                    original_text = original_elem.get_text(strip=True)
+                    try:
+                        original_price = float(original_text)
+                    except:
+                        pass
                 
                 # Find product name
-                name_parts = []
+                name = ""
                 
-                # Look for brand name
+                # Try structured name first
                 brand_elem = container.find('span', class_=re.compile(r'ebqvdy'))
-                if brand_elem:
-                    brand_text = brand_elem.get_text(strip=True)
-                    if brand_text:
-                        name_parts.append(brand_text)
-                
-                # Look for product name
                 name_elem = container.find('span', class_=re.compile(r'Product__StyledNameText'))
-                if name_elem:
-                    name_text = name_elem.get_text(strip=True)
-                    if name_text:
-                        name_parts.append(name_text)
                 
-                name = ' '.join(name_parts) if name_parts else ""
+                if brand_elem and name_elem:
+                    brand = brand_elem.get_text(strip=True)
+                    product_name = name_elem.get_text(strip=True)
+                    name = f"{brand} {product_name}".strip()
+                else:
+                    # Fallback: get title from any heading or link
+                    title_elem = container.find(['h2', 'h3', 'h4', 'h5', 'a'], class_=re.compile(r'title|name', re.I))
+                    if title_elem:
+                        name = title_elem.get_text(strip=True)
+                    else:
+                        # Last resort: get first long text
+                        all_text = container.get_text()
+                        lines = [line.strip() for line in all_text.split('\n') if len(line.strip()) > 10]
+                        if lines:
+                            name = lines[0]
                 
                 # Get product URL
                 url = ""
-                link = container.find('a', href=True)
-                if link and link.get('href'):
-                    href = link['href']
+                if container.name == 'a' and container.get('href'):
+                    href = container['href']
+                else:
+                    link = container.find('a', href=True)
+                    href = link['href'] if link else ""
+                
+                if href:
                     if href.startswith('http'):
                         url = href
                     elif href.startswith('/'):
@@ -177,13 +262,21 @@ class TamimiScraper:
                         url=url
                     )
                     products.append(product)
-                    logger.info(f"✅ Found: {name[:30]}... - {discount}% off - {current_price} SAR")
                     
             except Exception as e:
-                logger.debug(f"Error parsing product: {e}")
+                logger.debug(f"Error parsing container: {e}")
                 continue
         
-        return products
+        # Remove duplicates based on URL
+        unique_products = []
+        seen_urls = set()
+        for p in products:
+            if p.url not in seen_urls:
+                seen_urls.add(p.url)
+                unique_products.append(p)
+        
+        logger.info(f"✅ Successfully parsed {len(unique_products)} unique products")
+        return unique_products
     
     def send_telegram_alert(self, products):
         """Send alert to Telegram - ONLY for 69%+ discounts"""
@@ -191,28 +284,47 @@ class TamimiScraper:
             logger.error("Missing Telegram credentials")
             return
         
-        # Filter for 69%+ discounts (catches 69%, 70%, 71%, etc.)
+        # Filter for 69%+ discounts
         hot_deals = [p for p in products if p.discount_percent >= DISCOUNT_THRESHOLD]
-        
-        # Sort by discount (highest first)
         hot_deals.sort(key=lambda x: x.discount_percent, reverse=True)
         
         if not hot_deals:
-            # No 69%+ deals found - send a simple status update
-            message = f"🔍 <b>Tamimi Monitor</b>\n\n"
-            message += f"No items with ≥{DISCOUNT_THRESHOLD}% discount found.\n"
-            message += f"Total deals scanned: {len(products)}\n"
+            # No 69%+ deals - send detailed status
+            message = f"🔍 <b>Tamimi Monitor - Scan Results</b>\n\n"
+            message += f"📊 Total products scanned: {len(products)}\n"
             
-            # Show the highest discount found
             if products:
+                # Show discount distribution
+                discount_ranges = {
+                    "60-69%": len([p for p in products if 60 <= p.discount_percent < 70]),
+                    "50-59%": len([p for p in products if 50 <= p.discount_percent < 60]),
+                    "40-49%": len([p for p in products if 40 <= p.discount_percent < 50]),
+                    "30-39%": len([p for p in products if 30 <= p.discount_percent < 40]),
+                    "20-29%": len([p for p in products if 20 <= p.discount_percent < 30]),
+                    "10-19%": len([p for p in products if 10 <= p.discount_percent < 20]),
+                    "0-9%": len([p for p in products if p.discount_percent < 10]),
+                }
+                
+                message += "\n📈 <b>Discount Breakdown:</b>\n"
+                for range_name, count in discount_ranges.items():
+                    if count > 0:
+                        message += f"  • {range_name}: {count} items\n"
+                
                 max_discount = max(p.discount_percent for p in products)
-                message += f"Highest discount found: {max_discount}%\n"
+                message += f"\n✨ Highest discount found: <b>{max_discount}%</b>\n"
+                
+                # Show top deals
+                top_deals = sorted(products, key=lambda x: x.discount_percent, reverse=True)[:3]
+                message += "\n🏆 <b>Top 3 Deals:</b>\n"
+                for deal in top_deals:
+                    safe_name = pyhtml.escape(deal.name[:40])
+                    message += f"  • {safe_name}... - {deal.discount_percent}% off\n"
             
-            message += "\nI'll keep watching! 🤖"
+            message += "\nI'll keep watching for 69%+ deals! 🤖"
             
         else:
-            # We have 69%+ deals - send detailed alert
-            message = f"🔥🔥🔥 <b>MASSIVE DISCOUNTS ALERT! ({DISCOUNT_THRESHOLD}%+)</b> 🔥🔥🔥\n\n"
+            # We have 69%+ deals
+            message = f"🔥🔥🔥 <b>MASSIVE {DISCOUNT_THRESHOLD}%+ DISCOUNTS!</b> 🔥🔥🔥\n\n"
             message += f"Found <b>{len(hot_deals)}</b> items with ≥{DISCOUNT_THRESHOLD}% OFF!\n\n"
             
             for i, product in enumerate(hot_deals[:10], 1):
@@ -244,8 +356,6 @@ class TamimiScraper:
             
             if response.status_code == 200:
                 logger.info(f"✅ Telegram alert sent")
-                if hot_deals:
-                    logger.info(f"🔥 Found {len(hot_deals)} deals with ≥{DISCOUNT_THRESHOLD}% off")
             else:
                 logger.error(f"❌ Telegram error: {response.text}")
                 
@@ -265,37 +375,8 @@ class TamimiScraper:
             return
         
         self.products = self.parse_products(html)
-        logger.info(f"📦 Total products found: {len(self.products)}")
         
-        if self.products:
-            # Log all discount statistics
-            hot_deals = [p for p in self.products if p.discount_percent >= DISCOUNT_THRESHOLD]
-            logger.info(f"🔥 Deals ≥{DISCOUNT_THRESHOLD}%: {len(hot_deals)}")
-            
-            # Show discount distribution in relevant ranges
-            ranges = [
-                (90, 100), 
-                (DISCOUNT_THRESHOLD, 89),  # This will show 69-89%
-                (50, 68), 
-                (40, 49), 
-                (30, 39), 
-                (20, 29), 
-                (10, 19), 
-                (0, 9)
-            ]
-            
-            for high, low in ranges:
-                count = len([p for p in self.products if low <= p.discount_percent <= high])
-                if count > 0:
-                    logger.info(f"📊 Deals {low}-{high}%: {count}")
-            
-            # Show top 5 deals overall
-            sorted_products = sorted(self.products, key=lambda x: x.discount_percent, reverse=True)
-            logger.info("🏆 Top 5 deals overall:")
-            for i, p in enumerate(sorted_products[:5], 1):
-                logger.info(f"   {i}. {p.name[:30]}... - {p.discount_percent}% off")
-        
-        # Send alert (will only send if there are 69%+ deals)
+        # Send alert
         self.send_telegram_alert(self.products)
         logger.info("=" * 60)
 
