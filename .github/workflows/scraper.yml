@@ -20,13 +20,22 @@ jobs:
     
     - name: Install dependencies
       run: |
-        pip install playwright beautifulsoup4 requests
+        pip install -r requirements.txt
         playwright install chromium --with-deps
     
     - name: Run scraper
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        # Added explicit threshold just in case
         DISCOUNT_THRESHOLD: 50
       run: python scraper.py
+
+    - name: Upload Debug Artifacts
+      if: always() # This ensures it uploads even if the Python script crashes
+      uses: actions/upload-artifact@v4
+      with:
+        name: scraper-debug-files
+        path: |
+          tamimi_deals.png
+          tamimi_page.html
+        retention-days: 3
