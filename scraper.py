@@ -7,7 +7,7 @@ from dataclasses import dataclass, asdict
 import html as pyhtml
 
 from playwright.async_api import async_playwright
-from playwright_stealth.stealth import stealth  # CORRECTED IMPORT
+import playwright_stealth  # Universal import
 import requests
 
 # ================= CONFIGURATION =================
@@ -48,19 +48,20 @@ class TamimiScraper:
             )
             page = await context.new_page()
             
-            # This will now work correctly with the new import
-            await stealth(page)
+            # Use the async-safe call
+            await playwright_stealth.stealth_async(page)
             
             try:
                 logger.info(f"Navigating to {HOT_DEALS_URL}")
                 await page.goto(HOT_DEALS_URL, wait_until='networkidle', timeout=60000)
                 
-                # Scroll to load products
+                # Dynamic scroll to ensure all lazy-loaded items appear
                 for _ in range(5):
                     await page.mouse.wheel(0, 2000)
-                    await page.wait_for_timeout(1000)
+                    await page.wait_for_timeout(1500)
                 
                 page_html = await page.content()
+                # Save screenshot to your Artifacts for viewing later
                 await page.screenshot(path="tamimi_deals.png")
                 return page_html
                 
@@ -75,6 +76,7 @@ class TamimiScraper:
         soup = BeautifulSoup(page_html, 'html.parser')
         found_products = []
         
+        # Target English currency 'SAR' and '%'
         discount_badges = soup.find_all(string=re.compile(r'\d+%'))
         
         for badge in discount_badges:
@@ -96,7 +98,7 @@ class TamimiScraper:
                 price = float(price_match.group(1))
 
                 name_tag = container.find(['h2', 'h3', 'h4', 'h5', 'strong'])
-                name = name_tag.get_text(strip=True) if name_tag else "Unknown Product"
+                name = name_tag.get_text(strip=True) if name_tag else "Product Found"
                 
                 link_tag = container.find('a', href=True)
                 url = BASE_URL + link_tag['href'] if link_tag else ""
@@ -109,6 +111,7 @@ class TamimiScraper:
 
     def send_telegram_alert(self, deals):
         if not deals:
+            # You'll get this message if we found items but none are >= 50%
             message = f"🔍 <b>Tamimi Run:</b> No products ≥{DISCOUNT_THRESHOLD}% found."
         else:
             deals.sort(key=lambda x: x.discount_percent, reverse=True)
@@ -119,7 +122,7 @@ class TamimiScraper:
                 if d.original_price:
                     message += f"   <s>{d.original_price}</s> → "
                 message += f"<b>{d.current_price} SAR</b> (-{d.discount_percent}%)\n"
-                if d.url: message += f"   <a href='{d.url}'>Link</a>\n"
+                if d.url: message += f"   <a href='{d.url}'>View on Site</a>\n"
                 message += "\n"
 
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -129,6 +132,7 @@ class TamimiScraper:
         html = await self.fetch_page()
         if html:
             all_items = self.parse_products(html)
+            # Filter for items between 50% and 99%
             hot_deals = [p for p in all_items if p.discount_percent >= DISCOUNT_THRESHOLD]
             self.send_telegram_alert(hot_deals)
 
